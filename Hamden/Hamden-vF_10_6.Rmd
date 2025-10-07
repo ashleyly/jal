@@ -355,7 +355,7 @@ ggplot(data = val_data, aes(x = Sale, y = predSale)) +
 
 # Assessment of Fairness Given the Model
  
-The plot of Sale Price and Assessed Value vs. Predicted Sale of properties in 2024 shows Appraised Value in red and Actual Sale price in blue. The dashed line represents where the predicted price equals the actual value. Both the assessed value and actual sale price generally match our predicted price (except at high predicted sale prices), indicating that the assessor's values are generally fair. This is further supported by our graphs of Predicted Sale Price vs Appraised Value and Appraised Value vs Actual Sale Price, which show that both the assessed values and actual sale prices are generally close to our predicted sale prices and each other.
+The plot of Sale Price and Assessed Value vs. Predicted Sale of properties in 2024 shows Appraised Value in red and Actual Sale price in blue. The dashed line represents where the predicted price equals the actual value. Both the assessed value and actual sale price generally match our predicted price (except at high predicted sale prices), indicating that the assessor's values are generally fair. This is further supported by our graphs of Predicted Sale Price vs Appraised Value and Appraised Value vs Actual Sale Price, which show that both the assessed values and actual sale prices are generally close to our predicted sale prices and each other. However, the linear regression lines show that the assessor's values tend to be slightly higher than our predicted prices while lower than actual sale prices. Furthermore, our joint hypothesis test rejects the null hypothesis that the slope is 1 and intercept is 0, indicating that the assessor's values are not exactly equal to our predicted prices. 
 
 Looking at the variables in our model, we see that Living Area, Year, and Total Rooms are all significant predictors of sale price. These variables are likely included in the assessor's model as well. However, we are most likely missing some important variables that the assessor uses, such as neighborhood effects or recent renovations, which could explain why our model does not perfectly predict sale prices. If we had more variables to include in our model (i.e. values that were present in only one of 2009 or 2024 but not both), we may have been able to build a model more close to the assessor's and have been able to assess the fairness of the variables the assessor included.
 
@@ -379,6 +379,7 @@ test_data$residual_normalized <- test_data$residual/test_data$Appraised
 
 ggplot(data = train_data, aes(x = Current.Year.Assessment/0.7, y = Sale)) +
   geom_point(color = "blue", alpha = 0.5) +
+  geom_smooth(method = "lm") +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
   labs(title = "Appraised Value vs Actual Sale Price (2009 & 2024)",
        x = "Appraised Value",
@@ -386,6 +387,7 @@ ggplot(data = train_data, aes(x = Current.Year.Assessment/0.7, y = Sale)) +
 
 ggplot(data = test_data, aes(x = Appraised, y = predSale)) +
   geom_point(color = "blue", alpha = 0.5) +
+  geom_smooth(method = "lm") +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
   labs(title = "Predicted Sale Price vs Appraised Value (2009 & 2024)",
        x = "Appraised Value",
@@ -393,6 +395,7 @@ ggplot(data = test_data, aes(x = Appraised, y = predSale)) +
 
 ggplot(data = test_data[test_data$Year == 2024,], aes(x = Appraised, y = predSale)) +
   geom_point(color = "blue", alpha = 0.5) +
+  geom_smooth(method = "lm") +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
   labs(title = "Predicted Sale Price vs Appraised Value (2024 only)",
        x = "Appraised Value",
@@ -400,6 +403,13 @@ ggplot(data = test_data[test_data$Year == 2024,], aes(x = Appraised, y = predSal
 
 # model variables
 summary(fit)
+
+# joint hypothesis test
+library(car)
+m1 <- lm(Appraised ~ predSale, data = test_data[test_data$Year == 2024,])
+summary(m1)
+linearHypothesis(m1, c("predSale = 1", "(Intercept) = 0"))
+linearHypothesis(m1, c("predSale = 1"))
 ```
 
 # Subsets Analysis
