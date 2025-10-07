@@ -540,9 +540,11 @@ print(p)
 
 # Conclusion
 
-Our analysis shows that assessed value in 2024 is generally fair. Our predictive model for sale price in 2024 indicates that assessed values generally align with our predicted prices and actual sale prices, suggesting that the assessor's values are reasonable.
+Our analysis shows that assessed value in 2024 is generally fair, except in cases of high house value. Our predictive model for sale price in 2024 indicates that assessed values generally align with our predicted prices and actual sale prices, suggesting that the assessor's values are reasonable.
 
 Through our model, we found that certain property features, such as Living Area and Total Rooms, are strong predictors of sale price and are likely included in the assessor's model. The residual analysis indicates that the model assumptions are reasonably satisfied, and there is no significant overfitting based on cross-validation results.
 
-However, there are limitations to our analysis. Our model is based on the assumption that the assessor uses a similar set of variables and a linear regression approach, which may not be the case. This model does not account for all possible factors that could influence property values, such as neighborhood effects or recent renovations. For example, we see that our model may be underestimating sale prices for more expensive homes, as indicated by the positive correlation between sale price and residuals. This suggests that the assessor may be using additional variables or a different modeling approach for higher-value properties.
+However, there are limitations to our analysis. Our model is based on the assumption that the assessor uses a similar set of variables and a linear regression approach, which may not be the case. This model does not account for all possible factors that could influence property values, such as neighborhood effects or recent renovations. 
+
+Most importantly, we see that our model may be underestimating sale prices for more expensive homes, as indicated by the positive correlation between sale price and residuals and rejection of the joint hypothesis test of a slope of 1 between predicted sale and appraised value. This suggests that the assessor may be using additional variables or a different modeling approach for higher-value properties.
 
