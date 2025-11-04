@@ -1,0 +1,23 @@
+---
+title: "Chatbot Ratings"
+format: pdf
+editor: visual
+---
+
+## Introduction
+
+Chatbot Arena (lmarena.ai) is "an open-source platform for evaluating AI through human preference, developed by researchers at UC Berkeley [SkyLab](https://sky.cs.berkeley.edu/) and [LMSYS](https://lmsys.org/)." On the website <https://lmarena.ai/>, users can converse with two LLMs on any topic they choose. Users can then vote on which response they prefer (Model A or Model B) or can choose "Tie" or "Both bad" if they don't have a preference for either model. The LLMs are initially anonymous, but are revealed to the user after they vote.
+
+## Data
+
+The developers of this site provide data [here](https://huggingface.co/datasets/lmarena-ai/arena-human-preference-140k) on 140K conversations with pairwise human preferences. You can find this data in [this shared folder](https://yaleedu-my.sharepoint.com/:f:/g/personal/brian_macdonald_yale_edu/Eqo7cptmHAZAjNMv2F1dCj4BhZzs17e4hkfxbH8tMxLnwQ?e=Oo1DNN). There are 7 `.parquet` files. There is a README file in the GitHub repo that gives details about the data.
+
+Each row is a matchup between two chat bots (e.g. Gemini 2.5 Pro vs Claude Sonnet 4), and the columns indicate a conversation ID, the names of the two models, who the user selected as the winner of the matchup, a common query that the two models were given, the category of the prompt (creative writing, math, code, etc.) and other information. See the README file for more details.
+
+## Question
+
+Which chatbot(s) appears to perform best in the eyes of the judges/users? In a matchup between any two models Model A and Model B, what are the outcome probabilities? How do these change if you focus on specific categories (e.g. writing, math, code, etc.) of prompts? Can you think of any reason the data may not be reliable, or any way this rating system could be "gamed"?
+
+## Submission
+
+Submit a PDF report with your code and analysis to Gradescope.
