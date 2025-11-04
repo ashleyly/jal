@@ -6,7 +6,9 @@ editor: visual
 
 ## Introduction
 
-Chatbot Arena (lmarena.ai) is "an open-source platform for evaluating AI through human preference, developed by researchers at UC Berkeley [SkyLab](https://sky.cs.berkeley.edu/) and [LMSYS](https://lmsys.org/)." On the website <https://lmarena.ai/>, users can converse with two LLMs on any topic they choose. Users can then vote on which response they prefer (Model A or Model B) or can choose "Tie" or "Both bad" if they don't have a preference for either model. The LLMs are initially anonymous, but are revealed to the user after they vote.
+Chatbot Arena (lmarena.ai) is "an open-source platform for evaluating AI through human preference, developed by researchers at UC Berkeley [SkyLab](https://sky.cs.berkeley.edu/) and [LMSYS](https://lmsys.org/)." On the website <https://lmarena.ai/>, users can converse with two LLMs on any topic they choose. Users can then vote on which response they prefer (Model A or Model B) or can choose "Tie" or "Both bad" if they don't have a preference for either model. The LLMs are initially anonymous, but a
+
+re revealed to the user after they vote.
 
 ## Data
 
@@ -21,3 +23,21 @@ Which chatbot(s) appears to perform best in the eyes of the judges/users? In a m
 ## Submission
 
 Submit a PDF report with your code and analysis to Gradescope.
+
+## Setup
+
+```{r}
+# read in packages
+library(arrow)
+library(dplyr)
+
+# read in data and bind rows
+datalist <- vector("list", 7)
+for(i in 0:6){
+  datalist[[i+1]] <- arrow::read_parquet(paste0("data/train-0000", i, "-of-00007.parquet"))
+}
+
+df <- bind_rows(datalist)
+
+saveRDS(df, "data.rds")
+```
