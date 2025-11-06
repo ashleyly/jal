@@ -1,0 +1,133 @@
+---
+title: "ai_analysis_v1"
+format: html
+editor: visual
+---
+
+## Chatbot analysis v1
+
+```{r}
+#libraries
+library(dplyr)
+library(BradleyTerry2)
+library(dplyr)
+```
+
+Read in the data
+
+```{r}
+
+```
+
+Calculate percentage win rates
+
+```{r}
+# count wins per model
+model_wins <- d %>%
+  filter(winner %in% c("model1", "model2")) %>%
+  mutate(winner_model = ifelse(winner == "model1", model1, model2)) %>%
+  count(winner_model, name = "wins")
+
+# Count appearances
+model_appearances <- d %>%
+  select(model1, model2) %>%
+  pivot_longer(cols = everything(), values_to = "model") %>%
+  count(model, name = "appearances")
+
+# Merge wins and appearances
+performance_summary <- model_appearances %>%
+  left_join(model_wins, by = c("model" = "winner_model")) %>%
+  mutate(wins = replace_na(wins, 0),
+         win_rate = wins / appearances) %>%
+  arrange(desc(win_rate))
+
+print(performance_summary)
+```
+
+Plot win rate of models
+
+```{r}
+ggplot(performance_summary, aes(x = reorder(model, win_rate), y = win_rate)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Win Rate of Chatbot Models",
+       x = "Model",
+       y = "Win Rate (Proportion of Judged Wins)") +
+  theme_minimal()
+```
+
+Use logistic regression to quantify the performance differences between models while adjusting for factors like opponent or judge. A binary logistic regression was used, with model1 and model 2 as predictors.
+
+```{r}
+# Filter to usable rows
+df_use <- d %>%
+  filter(winner %in% c("model1", "model2"))
+
+# Binary outcome: 1 = model1 won, 0 = model2 won
+df_use <- df_use %>%
+  mutate(outcome = ifelse(winner == "model1", 1, 0))
+
+# Create indicator variables for model identities
+df_use <- df_use %>%
+  mutate(
+    model1_factor = factor(model1),
+    model2_factor = factor(model2)
+  )
+
+# Use model1 and model2 as predictors
+model <- glm(outcome ~ model1_factor + model2_factor, data = df_use, family = binomial)
+summary(model)
+```
+
+Bradley-Terry Model (specifically for pairwise comparison data)
+
+```{r}
+# Step 1: Prepare pairwise outcome data
+df_bt <- d %>%
+  filter(winner %in% c("model1", "model2")) %>%
+  mutate(
+    winner_model = ifelse(winner == "model1", model1, model2),
+    loser_model  = ifelse(winner == "model1", model2, model1)
+  )
+
+# Step 2: Ensure both winner and loser columns are factors with the same levels
+all_models <- union(df_bt$winner_model, df_bt$loser_model)
+df_bt <- df_bt %>%
+  mutate(
+    winner_model = factor(winner_model, levels = all_models),
+    loser_model  = factor(loser_model,  levels = all_models)
+  )
+
+# Step 3: Create player list for BTm format
+players <- data.frame(model = factor(all_models))  # model ID factor
+
+# Step 4: Fit the Bradley-Terry model
+bt_model <- BTm(
+  outcome = rep(1, nrow(df_bt)),
+  player1 = df_bt$winner_model,
+  player2 = df_bt$loser_model,
+  id = "model",
+  data = players
+)
+
+summary(bt_model)
+```
+
+1.  Subset by fields (math, creative writing, code) - which models perform best for which subsets, which has highest outcome probability for each subset
+    1.  build separate bradley-terry models by category
+    2.  compare rankings across subsets
+2.  Style & length
+    1.  How bold affects win rate
+    2.  How length affects win rate
+    3.  How tone (casual, formal, difficult/simple terminology, etc) affect win rate
+3.  Time
+    1.  how ratings have changed over time
+    2.  identify release inflection points for models
+4.  In cases where both models were bad, what were these prompts/the context? where do LLMs struggle still
+5.  User behavior
+    1.  whether users become harsher/more lenient over a session
+    2.  whether they bias model A usually over model B
+    3.  when do they not select a clear winner, do some users always choose
+    4.  have preferences changed
+6.  shiny plot - choose the model and see scores (ex. 90 for code) and strengths and weaknesses
+7.  
