@@ -30,14 +30,350 @@ Submit a PDF report with your code and analysis to Gradescope.
 # read in packages
 library(arrow)
 library(dplyr)
+library(tidyr)
+library(stringr)
+library(purrr)
+library(ggplot2)
+library(pubtheme)
+library(igraph)
+library(ggraph)
 
 # read in data and bind rows
-datalist <- vector("list", 7)
+datalist <- vector(mode = "list", length = 7)
+
 for(i in 0:6){
-  datalist[[i+1]] <- arrow::read_parquet(paste0("data/train-0000", i, "-of-00007.parquet"))
+  data <- read_parquet(paste0("data/train-0000", i, "-of-00007.parquet")) %>% 
+    as.data.frame() %>% 
+    select(c(1:6, 11:14))
+  datalist[[i+1]] <- data
+  print(i)
 }
 
 df <- bind_rows(datalist)
 
-saveRDS(df, "data.rds")
+flattened_data <- df %>% 
+  unpack(cols = category_tag) %>%
+  unpack(cols = c(creative_writing_v0.1, criteria_v0.1, if_v0.1, math_v0.1), 
+         names_sep = "_")
+
+saveRDS(flattened_data, file = "data.rds")
 ```
+
+```{r}
+# data exploration
+data <- readRDS("data.rds")
+head(data)
+colnames(data)
+
+table(data$winner, useNA = "ifany")
+```
+
+## Best Chatbot
+
+```{r}
+df2 <- data %>%
+  mutate(
+    a_win = case_when(winner == "model_a" ~ 1, TRUE ~ 0),
+    b_win = case_when(winner == "model_b" ~ 1, TRUE ~ 0),
+    a_tie = case_when(winner == "tie" ~ 1, TRUE ~ 0),
+    b_tie = a_tie
+  ) %>%
+  pivot_longer(
+    cols = c(model_a, model_b),
+    names_to = "side",
+    values_to = "model"
+  ) %>%
+  mutate(
+    win = if_else(side == "model_a", a_win, b_win),
+    tie = if_else(side == "model_a", a_tie, b_tie)
+  )
+
+model_summary <- df2 %>%
+  group_by(model) %>%
+  summarise(
+    wins = sum(win),
+    ties = sum(tie),
+    matches = n(), 
+    win_rate = wins / matches,
+    tie_rate = ties / matches,
+    success_rate = (wins + 0.5 * ties) / matches,
+    .groups = "drop"
+  ) %>%
+  arrange(desc(success_rate))
+
+model_summary
+
+# chart
+top10 <- model_summary %>%
+  slice_max(success_rate, n = 10) %>%
+  arrange(desc(success_rate)) %>%
+  mutate(model = reorder(model, success_rate))
+
+ggplot(top10, aes(x = model)) +
+  geom_col(aes(y = win_rate, fill = "Wins")) +
+  geom_col(aes(y = 0.5 * tie_rate, fill = "0.5 Tie Contribution")) +
+  geom_text(aes(y = success_rate, label = round(success_rate,3)), size = 3.5) +
+  coord_flip(clip = "off") +
+  scale_fill_manual(
+    name = "Component",
+    values = c("Wins" = "blue", "0.5 Tie Contribution" = "red")
+  ) +
+  labs(
+    title = "Top 10 Chatbots by Success Rate (Win + 0.5*Tie)",
+    x = "Model",
+    y = "Success Rate"
+  ) +
+  theme_pub() +
+  theme(plot.margin = margin(r = 15))
+```
+
+## Match-Up Outcome Probabilities
+
+```{r}
+# visualize match-ups
+pair_counts <- data %>%
+  count(model_a, model_b)
+
+ggplot(pair_counts, aes(n)) +
+  geom_histogram(bins = 30) +
+  theme_pub() +
+  labs(title = "Distribution of Matches per Model Pair",
+       x = "Matches per Pair", y = "Count of Pairs")
+
+# 1) Pair match counts
+pairs <- data %>%
+  count(model_a, model_b, name="matches")
+
+# 2) node success rates
+nodes <- model_summary %>%
+  select(model, success_rate)
+
+# 3) build graph object
+g <- graph_from_data_frame(d = pairs, vertices = nodes, directed = FALSE)
+
+# 4) plot
+ggraph(g, layout = "fr") +
+  geom_edge_link(aes(width = matches), alpha = 0.4) +
+  geom_node_point(aes(color = success_rate), size = 5) +
+  scale_edge_width(range = c(0.2, 3)) +
+  scale_color_gradient(low = "red", high = "blue") +  # red bad → blue good (colorblind safe)
+  pub_theme() +
+  theme(legend.position = "right") +
+  labs(
+    title = "Chatbot Arena Network",
+    subtitle = "Edge thickness = number of matches. Node color = success rate",
+    edge_width = "Matches",
+    color = "Success Rate"
+  )
+```
+
+```{r}
+pairwise_empirical <- df2 %>%
+  group_by(model_a, model_b) %>%
+  summarise(
+    matches = n(),
+    a_wins = sum(a_win),
+    b_wins = sum(b_win),
+    a_win_rate = a_wins / matches,
+    .groups = "drop"
+  )
+
+# lookup function:
+get_empirical <- function(x, y) {
+  pairwise_empirical %>%
+    filter(model_a == x, model_b == y) %>%
+    select(model_a, model_b, matches, a_win_rate)
+}
+
+# example
+get_empirical("Gemini 2.5 Pro", "Claude Sonnet 4")
+
+# install.packages("BradleyTerry2") # if needed
+library(BradleyTerry2)
+
+# prepare contingency for BT: counts of A wins, B wins, ties handled as half-wins
+bt_df <- df2 %>%
+  # ensure model names as factors
+  mutate(model_a = as.character(model_a), model_b = as.character(model_b)) %>%
+  group_by(model_a, model_b) %>%
+  summarise(
+    A_wins = sum(a_win),
+    B_wins = sum(b_win),
+    matches = n(),
+    .groups = "drop"
+  )
+
+# For BradleyTerry2 we need a "long" dataset of wins per pairing:
+# create a "contest" id and use counts as responses
+bt_long <- bt_df %>%
+  mutate(contest = row_number()) %>%
+  select(contest, model_a, model_b, A_wins, B_wins, matches)
+
+# Build BT data: form the wins vector and the player factor matrix
+# BradleyTerry2 expects (win1, win2) as response, and a player-design matrix
+results_list <- with(bt_long, {
+  # each row is a contest: cbind(A_wins, B_wins)
+  wins <- cbind(A_wins, B_wins)
+  players <- data.frame(player1 = model_a, player2 = model_b)
+  list(wins = wins, players = players)
+})
+
+# Build data for BT
+btdata <- BTm(outcome = results_list$wins,
+              player1 = results_list$players$player1,
+              player2 = results_list$players$player2,
+              id = unique(c(results_list$players$player1, results_list$players$player2)))
+
+bt_fit <- btdata
+summary(bt_fit)
+
+# extract ability scores (log-ability)
+abilities <- BTabilities(bt_fit)
+abilities_df <- data.frame(model = rownames(abilities), log_ability = abilities[,1]) %>%
+  arrange(desc(log_ability))
+abilities_df
+
+# compute pairwise probability function
+prob_A_beats_B <- function(modelA, modelB) {
+  a <- abilities_df$log_ability[abilities_df$model == modelA]
+  b <- abilities_df$log_ability[abilities_df$model == modelB]
+  p <- exp(a) / (exp(a) + exp(b))
+  p
+}
+
+# visualization
+# build matrix of pairwise probs from abilities_df
+models <- abilities_df$model
+prob_mat <- outer(models, models, Vectorize(function(x,y) {
+  if(x==y) return(NA_real_)
+  prob_A_beats_B(x,y)
+}))
+colnames(prob_mat) <- rownames(prob_mat) <- models
+# convert to long for ggplot
+prob_long <- as.data.frame(prob_mat) %>%
+  mutate(modelA = rownames(.)) %>%
+  pivot_longer(-modelA, names_to = "modelB", values_to = "p")
+library(ggplot2)
+ggplot(prob_long, aes(x = modelA, y = modelB, fill = p)) +
+  geom_tile() + coord_fixed() + theme_minimal() +
+  scale_fill_viridis_c(na.value = "white") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+## Match-Up Outcome Probabilities By Category
+
+```{r}
+# assume there is a column `creative_writing_v0.1_creative_writing` or `category`
+# If you have a single unified category variable, use that; otherwise adapt.
+
+# make a high-level 'category' column. Example heuristic:
+df2 <- df2 %>%
+  mutate(category = case_when(
+    !is.na(creative_writing_v0.1_creative_writing) & creative_writing_v0.1_creative_writing != "" ~ "creative_writing",
+    !is.na(math_v0.1_math) & math_v0.1_math != "" ~ "math",
+    is_code == TRUE ~ "code",
+    TRUE ~ "other"
+  ))
+
+# aggregate per category: top models by win-rate
+per_cat_summary <- df2 %>%
+  filter(winner_norm != "BOTH_BAD") %>%
+  group_by(category, model = model_a) %>%
+  summarise(wins_from_A = sum(a_win), matches_from_A = n(), .groups="drop_last") %>%
+  # need wins contributed by B rows as well; easier to convert to long like before
+  ungroup() %>%
+  bind_rows(
+    df2 %>% mutate(model = model_b, wins = b_win) %>% select(category, model, wins = b_win) %>% group_by(category, model) %>%
+      summarise(total_wins = sum(wins), matches = n(), .groups = "drop")
+  )
+
+# simpler: short code to compute win-rate per model-category
+model_cat <- bind_rows(
+  df2 %>% transmute(category, model = model_a, wins = a_win, n = 1),
+  df2 %>% transmute(category, model = model_b, wins = b_win, n = 1)
+) %>%
+  group_by(category, model) %>%
+  summarise(total_wins = sum(wins), matches = sum(n), win_rate = total_wins / matches, .groups = "drop") %>%
+  arrange(category, desc(win_rate))
+
+model_cat
+
+# visualize
+library(boot)
+
+# fn for bootstrap success rate
+success_fun <- function(data, idx) {
+  d2 <- data[idx,]
+  (mean(d2$winner == "model_a") + 0.5 * mean(d2$winner == "tie"))
+}
+
+# models per category
+cat_results <- flat_data %>%
+  mutate(category = language) %>%
+  group_by(category, model_a) %>%
+  summarise(
+    success = success_fun(cur_data_all(), 1:n()),
+    ci = list(boot(cur_data_all(), success_fun, R=400))
+  ) %>%
+  mutate(
+    lower = map_dbl(ci, ~ quantile(.x$t, .025)),
+    upper = map_dbl(ci, ~ quantile(.x$t, .975))
+  ) %>%
+  slice_max(success, n = 10) # top 10 per category
+
+ggplot(cat_results, aes(x = reorder(model_a, success), y = success)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = lower, ymax = upper), width = 0) +
+  facet_wrap(~category, scales = "free_y") +
+  coord_flip() +
+  pub_theme() +
+  labs(title = "Top Models per Category with 95% bootstrap CIs",
+       x = "Model", y = "Success Rate")
+```
+
+## Limitations
+
+```{r}
+# Count matches per pair and per model — sparsity:
+df2 %>% count(model_a, model_b) %>% arrange(n)  # look for tiny n
+model_summary %>% arrange(matches)  # models with very few matches
+
+# votes per session
+session_votes <- flat_data %>%
+  count(evaluation_session_id)
+
+ggplot(session_votes, aes(n)) +
+  geom_histogram(bins = 40) +
+  pub_theme() +
+  labs(title = "Votes per Session",
+       x = "Votes in Session", y = "Count of Sessions")
+
+# Distribution of judges / sessions: are a small set of users contributing many votes? If you have evaluation_session_id or timestamp, check duplicates:
+df2 %>% count(evaluation_session_id) %>% top_n(20, n)
+
+# Order effect (evaluation_order): does the first-shown model get more votes?
+df2 %>% group_by(evaluation_order) %>%
+  summarise(win_rate_first = mean(if_else(evaluation_order == "A", a_win, b_win)))
+
+# Time trends: models have versions; check timestamps — a model may improve over time.
+library(lubridate)
+df2 %>% mutate(ts = ymd_hms(timestamp)) %>% arrange(ts) %>% 
+  NULL
+
+model_ts <- flat_data %>%
+  filter(model_a == "Claude 3.5 Sonnet") %>%   # example — you can parametrize this
+  mutate(date = as.Date(timestamp)) %>%
+  group_by(date) %>%
+  summarise(success = mean(winner == "model_a" | winner == "tie"*0.5))
+
+ggplot(model_ts, aes(date, success)) +
+  geom_line() +
+  geom_smooth(se = FALSE) +
+  pub_theme() +
+  labs(title = "Time Series Win Rate for Claude 3.5 Sonnet",
+       x = "Date", y = "Success Rate")
+```
+
+\[insert discussion\]
+
+Short list for your write-up (explain each briefly): Selection bias of prompts: The set of prompts users choose to run is not random. Users may cherry-pick prompts that favor particular models (e.g., models known to be strong at coding get coding prompts). Non-random assignment of pairings: Some models may be pitted against weaker opponents more often. Non-independent judges / vote stuffing: A small set of users could generate many matches and bias results (or coordinated voting). Presentation / ordering effects: The interface might show Model A on the left or highlight one model first; humans have position/anchoring biases. Anonymity revealed post-vote: If users learn model identity after voting, future votes may be biased by familiarity or brand. Ties/Both Bad handling: How ties are scored affects rankings (half-win vs. remove). Model versions change over time: The dataset aggregates across time; newer model versions likely better — mixing versions mixes abilities. Different prompt difficulty across categories: A model may appear strong simply because it faced easier prompts in a category. Judge expertise and calibration: Users differ in domain expertise; uncalibrated judgments (one user prefers different style) add measurement noise. How to game it: Create many accounts / sessions and push desired model to win. Submit prompts that expose known weaknesses in a competitor. Coordinate to flood-match a model against a weak competitor to inflate win-rate. Exploit UI order bias (always vote for left-side model).
