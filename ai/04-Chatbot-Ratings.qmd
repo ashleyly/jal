@@ -29,15 +29,31 @@ Submit a PDF report with your code and analysis to Gradescope.
 ```{r}
 # read in packages
 library(arrow)
+library(tidyr)
 library(dplyr)
 
 # read in data and bind rows
-datalist <- vector("list", 7)
+datalist <- vector(mode = "list", length = 7)
+
 for(i in 0:6){
-  datalist[[i+1]] <- arrow::read_parquet(paste0("data/train-0000", i, "-of-00007.parquet"))
+  data <- read_parquet(paste0("data/train-0000", i, "-of-00007.parquet")) %>% 
+    as.data.frame() %>% 
+    select(c(1:6, 11:14))
+  datalist[[i+1]] <- data
+  print(i)
 }
 
 df <- bind_rows(datalist)
 
-saveRDS(df, "data.rds")
+flattened_data <- df %>% 
+  unpack(cols = category_tag) %>%
+  unpack(cols = c(creative_writing_v0.1, criteria_v0.1, if_v0.1, math_v0.1), 
+         names_sep = "_")
+
+saveRDS(flattened_data, file = "data.rds")
+```
+
+```{r}
+data <- readRDS("data.rds")
+head(data)
 ```
