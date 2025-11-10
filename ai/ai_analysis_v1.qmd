@@ -11,12 +11,15 @@ editor: visual
 library(dplyr)
 library(BradleyTerry2)
 library(dplyr)
+library(tidyr)
+library(ggplot2)
 ```
 
 Read in the data
 
 ```{r}
-
+d <- read.csv("data.csv")
+head(d)
 ```
 
 Calculate percentage win rates
@@ -24,13 +27,13 @@ Calculate percentage win rates
 ```{r}
 # count wins per model
 model_wins <- d %>%
-  filter(winner %in% c("model1", "model2")) %>%
-  mutate(winner_model = ifelse(winner == "model1", model1, model2)) %>%
+  filter(winner %in% c("model_a", "model_b")) %>%
+  mutate(winner_model = ifelse(winner == "model_a", model_a, model_b)) %>%
   count(winner_model, name = "wins")
 
 # Count appearances
 model_appearances <- d %>%
-  select(model1, model2) %>%
+  select(model_a, model_b) %>%
   pivot_longer(cols = everything(), values_to = "model") %>%
   count(model, name = "appearances")
 
@@ -47,13 +50,24 @@ print(performance_summary)
 Plot win rate of models
 
 ```{r}
-ggplot(performance_summary, aes(x = reorder(model, win_rate), y = win_rate)) +
+top10 <- performance_summary %>%
+  arrange(desc(win_rate)) %>%
+  slice_head(n = 30)
+
+ggplot(top10, aes(x = reorder(model, win_rate), y = win_rate)) +
   geom_col(fill = "steelblue") +
   coord_flip() +
-  labs(title = "Win Rate of Chatbot Models",
-       x = "Model",
-       y = "Win Rate (Proportion of Judged Wins)") +
-  theme_minimal()
+  labs(
+    title = "Top 10 Chatbot Models by Win Rate",
+    x = "Model",
+    y = "Win Rate (Proportion of Judged Wins)"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(size = 10, margin = margin(r = 8))
+  )
+
+
 ```
 
 Use logistic regression to quantify the performance differences between models while adjusting for factors like opponent or judge. A binary logistic regression was used, with model1 and model 2 as predictors.
@@ -61,21 +75,21 @@ Use logistic regression to quantify the performance differences between models w
 ```{r}
 # Filter to usable rows
 df_use <- d %>%
-  filter(winner %in% c("model1", "model2"))
+  filter(winner %in% c("model_a", "model_b"))
 
-# Binary outcome: 1 = model1 won, 0 = model2 won
+# Binary outcome: 1 = model_a won, 0 = model_b won
 df_use <- df_use %>%
-  mutate(outcome = ifelse(winner == "model1", 1, 0))
+  mutate(outcome = ifelse(winner == "model_a", 1, 0))
 
 # Create indicator variables for model identities
 df_use <- df_use %>%
   mutate(
-    model1_factor = factor(model1),
-    model2_factor = factor(model2)
+    model_a_factor = factor(model_a),
+    model_b_factor = factor(model_b)
   )
 
 # Use model1 and model2 as predictors
-model <- glm(outcome ~ model1_factor + model2_factor, data = df_use, family = binomial)
+model <- glm(outcome ~ model_a_factor + model_b_factor, data = df_use, family = binomial)
 summary(model)
 ```
 
@@ -84,10 +98,10 @@ Bradley-Terry Model (specifically for pairwise comparison data)
 ```{r}
 # Step 1: Prepare pairwise outcome data
 df_bt <- d %>%
-  filter(winner %in% c("model1", "model2")) %>%
+  filter(winner %in% c("model_a", "model_b")) %>%
   mutate(
-    winner_model = ifelse(winner == "model1", model1, model2),
-    loser_model  = ifelse(winner == "model1", model2, model1)
+    winner_model = ifelse(winner == "model_a", model_a, model_b),
+    loser_model  = ifelse(winner == "model_a", model_b, model_a)
   )
 
 # Step 2: Ensure both winner and loser columns are factors with the same levels
