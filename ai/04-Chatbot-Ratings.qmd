@@ -72,6 +72,34 @@ head(data)
 colnames(data)
 ```
 
+## Categories
+
+```{r}
+data <- data %>%
+  mutate(
+    # Convert weird values to logicals / numeric flags
+    cw_flag   = creative_writing_v0.1_creative_writing %in% c(TRUE, "TRUE", 1),
+    cw_score  = suppressWarnings(as.numeric(creative_writing_v0.1_score)),
+    
+    math_flag = math_v0.1_math %in% c(TRUE, "TRUE", 1),
+    
+    code_flag = is_code %in% c(TRUE, "TRUE", 1),
+    
+    if_flag   = if_v0.1_if %in% c(TRUE, "TRUE", 1),
+    if_score  = suppressWarnings(as.numeric(if_v0.1_score)),
+    
+    # Build category
+    category = case_when(
+      code_flag ~ "code",
+      math_flag ~ "math",
+      if_flag | if_score > 0 ~ "reasoning",
+      cw_flag | cw_score > 0 ~ "creative_writing",
+      TRUE ~ "other"
+    )
+  )
+count(data, category, sort = TRUE)
+```
+
 ## Best Chatbot
 
 ```{r}
@@ -151,6 +179,179 @@ leaderboard |>
   e_toolbox_feature("saveAsImage")
 ```
 
+## Best Chatbot (Shiny App)
+
+Includes overall leaderboard and option to filter by category.
+
+```{r}
+library(shiny)
+library(bslib)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(echarts4r)
+library(htmlwidgets)
+
+all_categories <- sort(unique(data$category))
+
+ui <- page_fillable(
+  theme = bs_theme(bootswatch = "flatly"),
+  layout_sidebar(
+    sidebar = sidebar(
+      selectizeInput("cat", "Filter categories (for Overall view):",
+                     choices = all_categories, selected = all_categories,
+                     multiple = TRUE, options = list(plugins = list("remove_button"))),
+      sliderInput("min_matches", "Min matches", min = 1, max = 500, value = 30, step = 1),
+      selectInput("leader_cat", "By-category leaderboard:", choices = c(all_categories), selected = all_categories[1])
+    ),
+    card(
+      full_screen = TRUE, collapsible = TRUE,
+      card_header("Overall Leaderboard (Win + 0.5×Tie)"),
+      card_body(echarts4rOutput("leaders_all", height = "600px"))
+    ),
+    card(
+      full_screen = TRUE, collapsible = TRUE,
+      card_header(textOutput("leaders_cat_title")),
+      card_body(echarts4rOutput("leaders_cat", height = "600px"))
+    )
+  )
+)
+
+server <- function(input, output, session){
+
+  filtered_data_overall <- reactive({
+    df <- data
+    if (!is.null(input$cat) && length(input$cat) > 0) df <- df %>% filter(category %in% input$cat)
+    df
+  })
+
+  make_df2 <- function(df) {
+    df %>%
+      mutate(
+        a_win = as.integer(winner == "model_a"),
+        b_win = as.integer(winner == "model_b"),
+        a_tie = as.integer(winner == "tie"),
+        b_tie = a_tie
+      ) %>%
+      pivot_longer(c(model_a, model_b), names_to = "side", values_to = "model") %>%
+      mutate(
+        win = if_else(side == "model_a", a_win, b_win),
+        tie = if_else(side == "model_a", a_tie, b_tie)
+      )
+  }
+
+  leaderboard_overall <- reactive({
+    df2 <- make_df2(filtered_data_overall())
+    df2 %>%
+      group_by(model) %>%
+      summarise(
+        wins = sum(win),
+        ties = sum(tie),
+        matches = n(),
+        win_rate = wins / matches,
+        tie_rate = ties / matches,
+        success_rate = (wins + 0.5 * ties) / matches,
+        .groups = "drop"
+      ) %>%
+      filter(matches >= input$min_matches) %>%
+      arrange(desc(success_rate)) %>%
+      mutate(
+        rank     = row_number(),
+        label    = sprintf("#%d  %s", rank, model),
+        win_comp = round(win_rate, 3),
+        tie_half = round(0.5 * tie_rate, 3)
+      )
+  })
+
+  output$leaders_all <- renderEcharts4r({
+    lb <- leaderboard_overall()
+    validate(need(nrow(lb) > 0, "No models meet the minimum matches threshold."))
+    start_lab <- lb$label[1]
+    end_lab   <- lb$label[min(10, nrow(lb))]
+
+    lb |>
+      e_charts(label) |>
+      e_bar(win_comp, name = "Win Rate", stack = "rate",
+            label = list(show = TRUE, position = "insideRight", color = "#fff", fontSize = 10)) |>
+      e_bar(tie_half, name = "0.5*Tie Rate", stack = "rate",
+            label = list(show = TRUE, position = "insideRight", color = "#fff", fontSize = 10)) |>
+      e_flip_coords() |>
+      e_y_axis(inverse = TRUE) |>
+      e_legend(orient = "vertical", right = 10, top = 40) |>
+      e_title("Chatbots Ranked by Success Rate (Win + 0.5×Tie)") |>
+      e_datazoom(y_index = 0, type = "slider", startValue = start_lab, endValue = end_lab) |>
+      e_datazoom(y_index = 0, type = "inside", startValue = start_lab, endValue = end_lab) |>
+      e_x_axis(max = 1,
+               axisLabel = list(formatter = htmlwidgets::JS("function(x){return (x*100).toFixed(0)+'%';}"))) |>
+      e_axis_labels(y = "Model (ranked)", x = "Success Rate") |>
+      e_grid(left = 170) |>
+      e_tooltip(show = FALSE) |>
+      e_theme("infographic") |>
+      e_toolbox_feature("saveAsImage")
+  })
+
+  leaderboard_by_cat <- reactive({
+    req(input$leader_cat)
+    df_cat <- data %>% filter(category == input$leader_cat)
+    df2 <- make_df2(df_cat)
+    df2 %>%
+      group_by(model) %>%
+      summarise(
+        wins = sum(win),
+        ties = sum(tie),
+        matches = n(),
+        win_rate = wins / matches,
+        tie_rate = ties / matches,
+        success_rate = (wins + 0.5 * ties) / matches,
+        .groups = "drop"
+      ) %>%
+      filter(matches >= input$min_matches) %>%
+      arrange(desc(success_rate)) %>%
+      mutate(
+        rank     = row_number(),
+        label    = sprintf("#%d  %s", rank, model),
+        win_comp = round(win_rate, 3),
+        tie_half = round(0.5 * tie_rate, 3)
+      )
+  })
+
+  output$leaders_cat_title <- renderText({
+    paste0("By-Category Leaderboard — ", input$leader_cat,
+           " (Win + 0.5×Tie; min matches = ", input$min_matches, ")")
+  })
+
+  output$leaders_cat <- renderEcharts4r({
+    lb <- leaderboard_by_cat()
+    validate(need(nrow(lb) > 0, "No models meet the minimum matches threshold for this category."))
+    start_lab <- lb$label[1]
+    end_lab   <- lb$label[min(10, nrow(lb))]
+
+    lb |>
+      e_charts(label) |>
+      e_bar(win_comp, name = "Win Rate", stack = "rate",
+            label = list(show = TRUE, position = "insideRight", color = "#fff", fontSize = 10)) |>
+      e_bar(tie_half, name = "0.5*Tie Rate", stack = "rate",
+            label = list(show = TRUE, position = "insideRight", color = "#fff", fontSize = 10)) |>
+      e_flip_coords() |>
+      e_y_axis(inverse = TRUE) |>
+      e_legend(orient = "vertical", right = 10, top = 40) |>
+      e_title(paste0("Chatbots in ", input$leader_cat, " Ranked by Success Rate")) |>
+      e_datazoom(y_index = 0, type = "slider", startValue = start_lab, endValue = end_lab) |>
+      e_datazoom(y_index = 0, type = "inside", startValue = start_lab, endValue = end_lab) |>
+      e_x_axis(max = 1,
+               axisLabel = list(formatter = htmlwidgets::JS("function(x){return (x*100).toFixed(0)+'%';}"))) |>
+      e_axis_labels(y = "Model (ranked)", x = "Success Rate") |>
+      e_grid(left = 170) |>
+      e_tooltip(show = FALSE) |>
+      e_theme("infographic") |>
+      e_toolbox_feature("saveAsImage")
+  })
+}
+
+shinyApp(ui, server)
+
+```
+
 ## Match-Up Outcome Probabilities
 
 ```{r}
@@ -224,26 +425,29 @@ grid <- expand.grid(
 grid$row_model <- factor(grid$row_model, levels = rev(model_order))  # rows: top = best
 grid$col_model <- factor(grid$col_model, levels = model_order)       # cols: left = best
 
-# 4) static heatmap
-p <- ggplot(grid, aes(x = col_model, y = row_model, fill = prob)) +
-  geom_tile(color = "white", linewidth = 0.2, na.rm = FALSE) +
-  scale_fill_viridis_c(
-    option = "D", limits = c(0, 1),
-    labels = percent_format(accuracy = 1),
-    name = "P(Row beats Col)"
-  ) +
-  coord_equal() +
-  labs(
-    title = "Head-to-Head Win Probabilities (Bradley–Terry)",
-    x = "Column model", y = "Row model"
-  ) +
-  theme_minimal(base_size = 13) +
-  theme(
-    axis.text.x = element_text(size = 4, angle = 45, hjust = 1, vjust = 1),
-    axis.text.y = element_text(size = 4)
-  )
+library(plotly)
+library(scales)
 
-print(p)
+grid <- grid %>% mutate(
+  hover = sprintf("Row: %s<br>Col: %s<br>P(Row beats Col): %s",
+                  row_model, col_model,
+                  ifelse(is.na(prob), "—", percent(prob, 0.1)))
+)
+
+p <- ggplot(grid, aes(x = col_model, y = row_model, fill = prob, text = hover)) +
+  geom_tile(color = "white", linewidth = 0.2, na.rm = FALSE) +
+  scale_fill_viridis_c(option = "D", limits = c(0,1),
+                       labels = percent_format(accuracy = 1),
+                       name = "P(Row beats Col)") +
+  coord_equal() +
+  labs(title = "Head-to-Head Win Probabilities (Bradley–Terry)",
+       x = "Column model", y = "Row model") +
+  theme_minimal(base_size = 13) +
+  theme(axis.text.x = element_text(size = 4, angle = 45, hjust = 1, vjust = 1),
+        axis.text.y = element_text(size = 4))
+
+ggplotly(p, tooltip = "text")
+
 ```
 
 ```{r}
@@ -379,68 +583,24 @@ visNetwork(nodes2, vn_edges2, width = "100%", height = "800px") %>%
 ```{r}
 library(shiny)
 library(bslib)
-# 1) Order models by success rate (for dropdown & consistent views)
-model_order <- model_summary %>% arrange(desc(success_rate)) %>% pull(model)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(rlang)
+library(BradleyTerry2)
+library(echarts4r)
+library(htmlwidgets)
 
-# 2) Bradley–Terry abilities (ties removed for BT fit)
-bt_data <- data %>%
-  filter(winner %in% c("model_a","model_b")) %>%
-  transmute(
-    player1 = model_a,
-    player2 = model_b,
-    r1 = as.numeric(winner == "model_a"),
-    r2 = as.numeric(winner == "model_b")
-  )
+all_categories <- sort(unique(data$category))
 
-players <- sort(unique(c(bt_data$player1, bt_data$player2)))
-bt_data <- bt_data %>%
-  mutate(
-    player1 = factor(player1, levels = players),
-    player2 = factor(player2, levels = players)
-  )
-
-bt_model <- BTm(cbind(r1, r2), player1, player2, data = bt_data, id = "player")
-abilities <- BTabilities(bt_model) %>%
-  as.data.frame() %>%
-  tibble::rownames_to_column("model") %>%
-  select(model, ability)
-
-ab_map <- setNames(abilities$ability, abilities$model)
-
-# 3) Empirical tie rate per unordered pair (used for 0.5 * tie stack)
-pair_ties <- data %>%
-  transmute(A = pmin(model_a, model_b),
-            B = pmax(model_a, model_b),
-            is_tie = as.integer(winner == "tie")) %>%
-  filter(A != B) %>%
-  summarise(matches = dplyr::n(), ties = sum(is_tie), .by = c(A, B)) %>%
-  mutate(tie_rate = ifelse(matches > 0, ties / matches, 0))
-
-# Helper: table for a selected model (predicted BT win vs each opponent)
-make_vs_table <- function(sel) {
-  opps <- setdiff(model_order, sel)
-  tibble(model = opps) %>%
-    mutate(
-      p_win = plogis(ab_map[sel] - ab_map[model]),    # BT predicted P(sel beats model)
-      A = pmin(sel, model),
-      B = pmax(sel, model)
-    ) %>%
-    left_join(pair_ties, by = c("A","B")) %>%
-    mutate(tie_rate = ifelse(is.na(tie_rate), 0, tie_rate)) %>%
-    arrange(desc(p_win)) %>%
-    transmute(
-      model,                                  # opponent
-      win_comp = round(p_win, 3),             # keep your rounding
-      tie_half = round(0.5 * tie_rate, 3)     # match your stack definition
-    )
-}
-
-# ================================ SHINY APP ===================================
 ui <- page_fillable(
   theme = bs_theme(bootswatch = "flatly"),
   layout_sidebar(
     sidebar = sidebar(
-      selectInput("model", "Choose a model:", choices = model_order, selected = model_order[1]),
+      selectizeInput("cat", "Filter categories:",
+                     choices = all_categories, selected = all_categories,
+                     multiple = TRUE, options = list(plugins = list("remove_button"))),
+      selectInput("model", "Choose a model:", choices = NULL),
       sliderInput("topn", "Default zoom to Top-N", min = 5, max = 50, value = 10, step = 1)
     ),
     card(
@@ -453,41 +613,121 @@ ui <- page_fillable(
 
 server <- function(input, output, session){
 
+  filtered_data <- reactive({
+    df <- data
+    if (!is.null(input$cat) && length(input$cat) > 0) df <- df %>% filter(category %in% input$cat)
+    df
+  })
+
+  model_order_filtered <- reactive({
+    df <- filtered_data()
+    appear <- df %>%
+      select(model_a, model_b) %>%
+      pivot_longer(everything(), values_to = "model") %>%
+      count(model, name = "appearances")
+    wins <- df %>%
+      filter(winner %in% c("model_a","model_b")) %>%
+      mutate(winner_model = if_else(winner == "model_a", model_a, model_b)) %>%
+      count(winner_model, name = "wins") %>%
+      rename(model = winner_model)
+    appear %>%
+      left_join(wins, by = "model") %>%
+      mutate(wins = replace_na(wins, 0),
+             success_rate = wins / appearances) %>%
+      arrange(desc(success_rate)) %>%
+      pull(model)
+  })
+
+  observeEvent(model_order_filtered(), {
+    choices <- model_order_filtered()
+    if (!length(choices)) choices <- sort(unique(c(data$model_a, data$model_b)))
+    sel <- if (input$model %in% choices) input$model else choices[1]
+    updateSelectInput(session, "model", choices = choices, selected = sel)
+  }, ignoreInit = FALSE)
+
+  bt_fit_reactive <- reactive({
+    df <- filtered_data() %>%
+      filter(winner %in% c("model_a","model_b")) %>%
+      transmute(
+        player1 = model_a,
+        player2 = model_b,
+        r1 = as.numeric(winner == "model_a"),
+        r2 = as.numeric(winner == "model_b")
+      )
+    validate(need(nrow(df) > 0, "No decisive matches in the selected filter."))
+    players <- sort(unique(c(df$player1, df$player2)))
+    df <- df %>% mutate(
+      player1 = factor(player1, levels = players),
+      player2 = factor(player2, levels = players)
+    )
+    fit <- tryCatch(BTm(cbind(r1, r2), player1, player2, data = df, id = "player"),
+                    error = function(e) NULL)
+    validate(need(!is.null(fit), "BT model failed to fit for the selected filter."))
+    fit
+  })
+
+  abilities_reactive <- reactive({
+    fit <- bt_fit_reactive()
+    ab <- BTabilities(fit) %>% as.data.frame() %>% tibble::rownames_to_column("model") %>%
+      select(model, ability)
+    setNames(ab$ability, ab$model)
+  })
+
+  pair_ties_reactive <- reactive({
+    filtered_data() %>%
+      transmute(A = pmin(model_a, model_b),
+                B = pmax(model_a, model_b),
+                is_tie = as.integer(winner == "tie")) %>%
+      filter(A != B) %>%
+      summarise(matches = dplyr::n(), ties = sum(is_tie), .by = c(A, B)) %>%
+      mutate(tie_rate = ifelse(matches > 0, ties / matches, 0))
+  })
+
+  make_vs_table <- function(sel, model_choices, ab_map, pair_ties) {
+    opps <- setdiff(model_choices, sel)
+    if (!(sel %in% names(ab_map)) || !length(opps))
+      return(tibble(model = character(), win_comp = numeric(), tie_half = numeric()))
+    tibble(model = opps) %>%
+      mutate(
+        p_win = ifelse(model %in% names(ab_map),
+                       plogis(ab_map[sel] - ab_map[model]), NA_real_),
+        A = pmin(sel, model), B = pmax(sel, model)
+      ) %>%
+      left_join(pair_ties, by = c("A","B")) %>%
+      mutate(tie_rate = replace_na(tie_rate, 0),
+             p_win = replace_na(p_win, 0)) %>%
+      arrange(desc(p_win)) %>%
+      transmute(model, win_comp = round(p_win, 3), tie_half = round(0.5 * tie_rate, 3))
+  }
+
   output$chart_title <- renderText({
-    paste0("Predicted vs Others — ", input$model, " (BT win + 0.5× tie)")
+    cats <- if (is.null(input$cat) || !length(input$cat)) "All categories" else paste(input$cat, collapse = ", ")
+    paste0("Predicted vs Others — ", input$model, " (BT win + 0.5× tie)  |  Categories: ", cats)
   })
 
   output$chart <- renderEcharts4r({
-    df <- make_vs_table(input$model) %>%
-      mutate(
-        rank = row_number(),
-        label = sprintf("#%d  %s", rank, model)  # << your label field
-      )
+    ab_map   <- abilities_reactive()
+    pair_tie <- pair_ties_reactive()
+    choices  <- model_order_filtered()
+    validate(need(length(choices) > 0, "No models available for the selected filter."))
 
-    top10_start <- df$label[1]
-    top10_end   <- df$label[min(input$topn, nrow(df))]
+    df <- make_vs_table(input$model, choices, ab_map, pair_tie) %>%
+      mutate(rank = row_number(), label = sprintf("#%d  %s", rank, model))
+    validate(need(nrow(df) > 0, "No head-to-head predictions available."))
+    top_start <- df$label[1]; top_end <- df$label[min(input$topn, nrow(df))]
 
-    # ---- your chart, unchanged except data source/labels ---------------------
     df |>
       e_charts(label) |>
-      e_bar(
-        win_comp, name = "P(Win)", stack = "rate",
-        label = list(show = TRUE, position = "insideRight",
-                     color = "#fff", fontSize = 10)
-      ) |>
-      e_bar(
-        tie_half, name = "0.5*P(Tie)", stack = "rate",
-        label = list(show = TRUE, position = "right",
-                     color = "#000", fontSize = 10)
-      ) |>
+      e_bar(win_comp, name = "P(Win)", stack = "rate",
+            label = list(show = TRUE, position = "insideRight", color = "#fff", fontSize = 10)) |>
+      e_bar(tie_half, name = "0.5*P(Tie)", stack = "rate",
+            label = list(show = TRUE, position = "right", color = "#000", fontSize = 10)) |>
       e_flip_coords() |>
       e_y_axis(inverse = TRUE) |>
       e_legend(orient = "vertical", right = 10, top = 40) |>
       e_title("Predicted Win & Tie Rates Against Other Chatbots") |>
-      e_datazoom(y_index = 0, type = "slider",
-                 startValue = top10_start, endValue = top10_end) |>
-      e_datazoom(y_index = 0, type = "inside",
-                 startValue = top10_start, endValue = top10_end) |>
+      e_datazoom(y_index = 0, type = "slider", startValue = top_start, endValue = top_end) |>
+      e_datazoom(y_index = 0, type = "inside", startValue = top_start, endValue = top_end) |>
       e_x_axis(max = 1,
                axisLabel = list(formatter = htmlwidgets::JS("function(x){return (x*100).toFixed(0)+'%';}"))) |>
       e_axis_labels(y = "Opponent (ranked by P(win))", x = "Success Rate") |>
@@ -499,6 +739,7 @@ server <- function(input, output, session){
 }
 
 shinyApp(ui, server)
+
 ```
 
 ## Limitations
@@ -547,3 +788,308 @@ ggplot(model_ts, aes(date, success)) +
 \[insert discussion\]
 
 Short list for your write-up (explain each briefly): Selection bias of prompts: The set of prompts users choose to run is not random. Users may cherry-pick prompts that favor particular models (e.g., models known to be strong at coding get coding prompts). Non-random assignment of pairings: Some models may be pitted against weaker opponents more often. Non-independent judges / vote stuffing: A small set of users could generate many matches and bias results (or coordinated voting). Presentation / ordering effects: The interface might show Model A on the left or highlight one model first; humans have position/anchoring biases. Anonymity revealed post-vote: If users learn model identity after voting, future votes may be biased by familiarity or brand. Ties/Both Bad handling: How ties are scored affects rankings (half-win vs. remove). Model versions change over time: The dataset aggregates across time; newer model versions likely better — mixing versions mixes abilities. Different prompt difficulty across categories: A model may appear strong simply because it faced easier prompts in a category. Judge expertise and calibration: Users differ in domain expertise; uncalibrated judgments (one user prefers different style) add measurement noise. How to game it: Create many accounts / sessions and push desired model to win. Submit prompts that expose known weaknesses in a competitor. Coordinate to flood-match a model against a weak competitor to inflate win-rate. Exploit UI order bias (always vote for left-side model).
+
+```{r}
+library(shiny)
+library(bslib)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(purrr)
+library(scales)
+library(echarts4r)
+library(htmlwidgets)
+
+stopifnot("category" %in% names(data))
+
+# ---------- helpers ----------
+# Expand each match into (model, category, win/tie) rows for both sides
+make_df2 <- function(df) {
+  df %>%
+    mutate(
+      a_win = as.integer(winner == "model_a"),
+      b_win = as.integer(winner == "model_b"),
+      a_tie = as.integer(winner == "tie"),
+      b_tie = a_tie
+    ) %>%
+    pivot_longer(c(model_a, model_b), names_to = "side", values_to = "model") %>%
+    mutate(
+      win = if_else(side == "model_a", a_win, b_win),
+      tie = if_else(side == "model_a", a_tie, b_tie)
+    )
+}
+
+# Wilson CI for a proportion (works for success rate or win rate)
+wilson_ci <- function(successes, n, z = 1.96) {
+  ifelse(n > 0, {
+    phat <- successes / n
+    denom <- 1 + (z^2)/n
+    center <- (phat + (z^2)/(2*n)) / denom
+    half   <- (z * sqrt((phat*(1-phat) + (z^2)/(4*n))/n)) / denom
+    tibble(lower = pmax(0, center - half), upper = pmin(1, center + half))
+  }, tibble(lower = NA_real_, upper = NA_real_))
+}
+
+all_models <- sort(unique(c(data$model_a, data$model_b)))
+all_categories <- sort(unique(data$category))
+
+# ---------- UI ----------
+ui <- page_fillable(
+  theme = bs_theme(bootswatch = "flatly"),
+  layout_sidebar(
+    sidebar = sidebar(
+      selectInput("model", "Choose a model:", choices = all_models, selected = all_models[1]),
+      selectizeInput("cats", "Categories:", choices = all_categories, selected = all_categories,
+                     multiple = TRUE, options = list(plugins = list("remove_button"))),
+      sliderInput("min_n", "Min matches per category", min = 1, max = 200, value = 25, step = 1),
+      checkboxInput("use_success", "Use Success Rate (Win + 0.5×Tie)", value = TRUE),
+      checkboxInput("show_ci", "Show 95% CIs in table", value = TRUE)
+    ),
+    card(
+      full_screen = TRUE, collapsible = TRUE, collapsed = FALSE,
+      card_header(textOutput("title_bar")),
+      card_body(echarts4rOutput("bar", height = "520px"))
+    ),
+    card(
+      full_screen = FALSE, collapsible = TRUE, collapsed = FALSE,
+      card_header("Strengths & Weaknesses (Radar; normalized within selected categories)"),
+      card_body(echarts4rOutput("radar", height = "420px"))
+    ),
+    card(
+      collapsible = TRUE, collapsed = TRUE,
+      card_header("Details by Category"),
+      card_body(tableOutput("detail_table"))
+    )
+  )
+)
+
+# ---------- SERVER ----------
+server <- function(input, output, session){
+
+  # Filter to chosen categories
+  filtered <- reactive({
+    df <- data %>% filter(category %in% input$cats)
+    validate(need(nrow(df) > 0, "No rows in selected categories."))
+    df
+  })
+
+  # Long form per (model, category)
+  df2 <- reactive({ make_df2(filtered()) })
+
+  # Per-(model, category) summary
+  model_cat_summary <- reactive({
+    df2() %>%
+      group_by(model, category) %>%
+      summarise(
+        wins = sum(win),
+        ties = sum(tie),
+        matches = n(),
+        win_rate = wins / matches,
+        tie_rate = ties / matches,
+        success_rate = (wins + 0.5 * ties) / matches,
+        .groups = "drop"
+      )
+  })
+
+  # Selected model profile + category benchmark (weighted by per-model matches)
+  sel_profile <- reactive({
+    metric <- if (input$use_success) "success_rate" else "win_rate"
+    mcs <- model_cat_summary()
+
+    me <- mcs %>%
+      filter(model == input$model) %>%
+      rename(model_matches = matches)
+
+    bench <- mcs %>%
+      group_by(category) %>%
+      summarise(
+        bench = weighted.mean(.data[[metric]], w = .data$matches),
+        total_matches = sum(.data$matches),
+        .groups = "drop"
+      )
+
+    me %>%
+      inner_join(bench, by = "category") %>%
+      mutate(
+        metric = .data[[metric]],
+        lift = metric - bench
+      ) %>%
+      filter(model_matches >= input$min_n) %>%
+      arrange(desc(metric))
+  })
+
+  # Title
+  output$title_bar <- renderText({
+    paste0("Category Profile for ", input$model, " — ",
+           if (input$use_success) "Success Rate (Win + 0.5×Tie)" else "Win Rate",
+           "  |  Min matches: ", input$min_n)
+  })
+
+  # BAR: model vs category average (with lift tooltip)
+  output$bar <- renderEcharts4r({
+    prof <- sel_profile()
+  
+    # Drop rows with missing metric/bench; require finite values
+    prof <- prof %>%
+      filter(is.finite(metric), is.finite(bench)) %>%
+      # still guard against empty after filtering
+      mutate(
+        metric = ifelse(is.na(metric), 0, metric),
+        bench  = ifelse(is.na(bench),  0, bench)
+      )
+  
+    validate(need(nrow(prof) > 0, "No categories meet the minimum matches threshold."))
+  
+    chart_df <- prof %>%
+      arrange(desc(metric)) %>%
+      mutate(
+        cat_lab = sprintf("%s  (n=%d)", category, model_matches),
+        my_val  = round(metric, 6),   # keep numeric; rounding later in JS
+        bench_r = round(bench,  6)
+      )
+  
+    chart_df |>
+      e_charts(cat_lab) |>
+      e_bar(
+        my_val, name = input$model,
+        label = list(
+          show = TRUE, position = "insideRight",
+          color = "#fff", fontSize = 10,
+          formatter = htmlwidgets::JS(
+            "function(p){
+               if(p.value == null || !isFinite(p.value)) return '';
+               return (p.value*100).toFixed(0) + '%';
+             }")
+        )
+      ) |>
+      e_line(
+        bench_r, name = "Category Avg", y_index = 0,
+        symbol = "circle", symbolSize = 6
+      ) |>
+      e_tooltip(
+        trigger = "axis",
+        formatter = htmlwidgets::JS(
+          "function (params) {
+             const bar  = params.find(p => p.seriesName !== 'Category Avg');
+             const line = params.find(p => p.seriesName === 'Category Avg');
+             const vBar  = (bar  && isFinite(bar.value))  ? bar.value  : 0;
+             const vLine = (line && isFinite(line.value)) ? line.value : 0;
+             const lift  = (vBar - vLine)*100;
+             return params[0].axisValue + '<br/>' +
+                    bar.seriesName + ': ' + (vBar*100).toFixed(1) + '%<br/>' +
+                    'Category Avg: ' + (vLine*100).toFixed(1) + '%<br/>' +
+                    'Lift: ' + lift.toFixed(1) + ' pts';
+           }")
+      ) |>
+      e_flip_coords() |>
+      e_y_axis(inverse = TRUE) |>
+      e_title("Model vs Category Average") |>
+      e_x_axis(
+        max = 1,
+        axisLabel = list(formatter = htmlwidgets::JS(
+          "function(x){ return (x*100).toFixed(0)+'%'; }"))
+      ) |>
+      e_axis_labels(
+        y = "Category (n = matches)",
+        x = if (input$use_success) "Success Rate" else "Win Rate"
+      ) |>
+      e_grid(left = 170) |>
+      e_legend(right = 10, top = 30) |>
+      e_datazoom(y_index = 0, type = "slider") |>
+      e_theme("infographic") |>
+      e_toolbox_feature("saveAsImage")
+  })
+
+
+  # RADAR: normalized strengths (0–1 within selected categories)
+  output$radar <- renderEcharts4r({
+    mcs <- model_cat_summary() %>% filter(matches >= input$min_n)
+    metric <- if (input$use_success) "success_rate" else "win_rate"
+  
+    # Compute min/max per category for normalization
+    cat_minmax <- mcs %>%
+      group_by(category) %>%
+      summarise(
+        mn = suppressWarnings(min(.data[[metric]], na.rm = TRUE)),
+        mx = suppressWarnings(max(.data[[metric]], na.rm = TRUE)),
+        .groups = "drop"
+      )
+  
+    me <- mcs %>%
+      filter(model == input$model) %>%
+      inner_join(cat_minmax, by = "category") %>%
+      mutate(
+        # Normalize; if mx==mn or NA, set to 0.5 neutral
+        val = dplyr::case_when(
+          is.finite(mx) & is.finite(mn) & mx > mn ~ ( .data[[metric]] - mn ) / (mx - mn),
+          TRUE ~ 0.5
+        )
+      ) %>%
+      arrange(category)
+  
+    # Keep only categories with finite values
+    me <- me %>% filter(is.finite(val))
+  
+    validate(need(nrow(me) >= 3, "Not enough categories with sufficient matches for radar."))
+  
+    # Wide one-row frame; replace any remaining NA with 0.5
+    df_wide <- me %>%
+      select(category, val) %>%
+      tidyr::pivot_wider(names_from = category, values_from = val) %>%
+      mutate(across(everything(), ~ ifelse(is.na(.x), 0.5, .x))) %>%
+      mutate(model = input$model)
+  
+    # Category columns for the series
+    cat_cols <- setdiff(names(df_wide), "model")
+    validate(need(length(cat_cols) >= 3, "Radar needs ≥ 3 categories."))
+  
+    # Indicator list-of-lists to avoid jsonlite named-vector warnings
+    indicator_list <- lapply(cat_cols, function(nm) list(name = nm, max = 1))
+  
+    df_wide |>
+      e_charts(model) |>
+      e_radar(!!!rlang::syms(cat_cols), name = input$model) |>
+      e_radar_opts(indicator = indicator_list) |>
+      e_title("Normalized Strengths by Category (0–1 within chosen categories)") |>
+      e_tooltip(trigger = "item") |>
+      e_theme("infographic")
+  })
+
+
+  # DETAILS table (with optional 95% Wilson CI)
+  output$detail_table <- renderTable({
+    prof <- sel_profile()
+    metric <- if (input$use_success) "success_rate" else "win_rate"
+
+    if (input$use_success) {
+      ci <- wilson_ci(successes = prof$wins + 0.5 * prof$ties, n = prof$model_matches)
+    } else {
+      ci <- wilson_ci(successes = prof$wins, n = prof$model_matches)
+    }
+
+    tibble(
+      Category = prof$category,
+      `Matches (model)` = prof$model_matches,
+      Wins = prof$wins,
+      Ties = prof$ties,
+      Rate = scales::percent(prof$metric, accuracy = 0.1),
+      `95% CI` = if (input$show_ci)
+        paste0(scales::percent(ci$lower, 0.1), " – ", scales::percent(ci$upper, 0.1))
+        else NA_character_,
+      `Category Avg` = scales::percent(prof$bench, 0.1),
+      `Lift (pts)` = round(100 * prof$lift, 1),
+      `Matches (category total)` = prof$total_matches
+    )
+  },
+  striped = TRUE,
+  bordered = FALSE,
+  spacing = "m",
+  align = "lrrrccrrr"  # 9 columns → one alignment char per column
+  )
+}
+
+shinyApp(ui, server)
+
+
+
+```
