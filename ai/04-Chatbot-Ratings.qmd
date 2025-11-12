@@ -247,6 +247,9 @@ ui <- fluidPage(
           )
         ),
         bslib::card_body(
+          div(style = "font-weight:600; margin:8px 0;", "Head-to-Head Win Probabilities (Bradley–Terry)"),
+          plotlyOutput("bt_heatmap", height = "680px"),
+          tags$hr(),
           div(style = "font-weight:600; margin:8px 0;", "Sorted Bar Chart"),
           echarts4rOutput("bt_chart", height = "720px"),
           tags$hr(),
@@ -660,9 +663,78 @@ server <- function(input, output, session){
   })
 
   bt_abilities <- reactive({
-    fit <- bt_fit()
-    ab <- BTabilities(fit) %>% as.data.frame() %>% tibble::rownames_to_column("model") %>% select(model, ability)
-    setNames(ab$ability, ab$model)
+      fit <- bt_fit()
+      ab <- BTabilities(fit) %>% as.data.frame() %>% tibble::rownames_to_column("model") %>% select(model, ability)
+      setNames(ab$ability, ab$model)
+    })
+    
+  output$bt_heatmap <- renderPlotly({
+    # Abilities (named numeric vector) and available models in scope
+    ab_map   <- bt_abilities()                        # named numeric vector: ability by model
+    choices  <- models_available()                    # models visible in current view/filter
+  
+    validate(need(length(choices) > 1, "Need at least two models to draw the heatmap."))
+  
+    # Put abilities into a data frame
+    abilities <- tibble(model = names(ab_map), ability = as.numeric(ab_map))
+  
+    # Order by leaderboard success_rate (already sorted there)
+    lb <- leaderboard()
+    validate(need(nrow(lb) > 0, "No leaderboard rows to drive model ordering."))
+  
+    model_order <- intersect(lb$model, abilities$model)
+    validate(need(length(model_order) > 1, "Not enough overlap between BT models and leaderboard models."))
+  
+    # Full grid of pairs with P(row beats col) from BT
+    grid <- expand.grid(
+      row_model = model_order,
+      col_model = model_order,
+      stringsAsFactors = FALSE
+    ) %>%
+      mutate(
+        prob = ifelse(
+          row_model == col_model, NA_real_,
+          plogis(ab_map[row_model] - ab_map[col_model])
+        )
+      )
+  
+    # Factors to enforce ordering (rows: top=best; cols: left=best)
+    grid$row_model <- factor(grid$row_model, levels = rev(model_order))
+    grid$col_model <- factor(grid$col_model, levels = model_order)
+  
+    # Hover text
+    grid <- grid %>% mutate(
+      hover = sprintf("Row: %s<br>Col: %s<br>P(Row beats Col): %s",
+                      row_model, col_model,
+                      ifelse(is.na(prob), "—", percent(prob, 0.1)))
+    )
+  
+    p <- ggplot(grid, aes(x = col_model, y = row_model, fill = prob, text = hover)) +
+      geom_tile(na.rm = FALSE) +
+      scale_fill_viridis_c(
+        option = "D", limits = c(0, 1),
+        labels = percent_format(accuracy = 1),
+        name = "P(Row beats Col)"
+      ) +
+      scale_color_identity() +
+      scale_linewidth_identity() +
+      coord_equal() +
+      labs(
+        title = "Head-to-Head Win Probabilities (Bradley–Terry)",
+        x = "Column model",
+        y = "Row model"
+      ) +
+      theme_minimal(base_size = 13) +
+      theme(
+        plot.title.position = "plot",
+        axis.title.x = element_text(margin = margin(t = 0)),  # reduce gap below plot
+        axis.title.y = element_text(margin = margin(r = 0)),
+        axis.text.x = element_text(size = 3, angle = 45, hjust = 1, vjust = 1),
+        axis.text.y = element_text(size = 4),
+        panel.grid = element_blank()
+      )
+    
+    ggplotly(p, tooltip = "text")
   })
 
   # Build predicted rates table for the selected model
@@ -780,188 +852,6 @@ server <- function(input, output, session){
 }
 
 shinyApp(ui, server)
-```
-
-```{r}
-# 1) order by success_rate (highest → lowest)
-model_order <- model_summary %>% arrange(desc(success_rate)) %>% pull(model)
-
-# keep only models present in the BT abilities table
-model_order <- intersect(model_order, abilities$model)
-
-# 2) ability lookup
-ab_map <- setNames(abilities$ability, abilities$model)
-
-# 3) full grid of pairs with BT prob P(row beats col)
-grid <- expand.grid(
-  row_model = model_order,
-  col_model = model_order,
-  stringsAsFactors = FALSE
-) %>%
-  mutate(
-    prob = ifelse(
-      row_model == col_model, NA_real_,
-      plogis(ab_map[row_model] - ab_map[col_model])  # exp(a)/(exp(a)+exp(b))
-    )
-  )
-
-# factors to get the desired ordering in the plot:
-grid$row_model <- factor(grid$row_model, levels = rev(model_order))  # rows: top = best
-grid$col_model <- factor(grid$col_model, levels = model_order)       # cols: left = best
-
-library(plotly)
-library(scales)
-
-grid <- grid %>% mutate(
-  hover = sprintf("Row: %s<br>Col: %s<br>P(Row beats Col): %s",
-                  row_model, col_model,
-                  ifelse(is.na(prob), "—", percent(prob, 0.1)))
-)
-
-p <- ggplot(grid, aes(x = col_model, y = row_model, fill = prob, text = hover)) +
-  geom_tile(color = "white", linewidth = 0.2, na.rm = FALSE) +
-  scale_fill_viridis_c(option = "D", limits = c(0,1),
-                       labels = percent_format(accuracy = 1),
-                       name = "P(Row beats Col)") +
-  coord_equal() +
-  labs(title = "Head-to-Head Win Probabilities (Bradley–Terry)",
-       x = "Column model", y = "Row model") +
-  theme_minimal(base_size = 13) +
-  theme(axis.text.x = element_text(size = 4, angle = 45, hjust = 1, vjust = 1),
-        axis.text.y = element_text(size = 4))
-
-ggplotly(p, tooltip = "text")
-
-```
-
-```{r}
-# edges and nodes
-pairs <- data %>% 
-  count(model_a, model_b, name = "matches") %>%
-  mutate(
-    edge_width = log1p(matches),   # damp outliers for thickness
-    match_bin = cut(                # edge COLOR uses raw-match bins (for legend)
-      matches,
-      breaks = c(1,5,10,25,50,100,Inf),
-      labels = c("1–5","6–10","11–25","26–50","51–100","100+"),
-      right = TRUE, include.lowest = TRUE
-    )
-  )
-
-nodes <- model_summary %>% 
-  select(model, success_rate)
-
-g <- graph_from_data_frame(d = pairs, vertices = nodes, directed = FALSE)
-
-# ---- ADDED: total matches per model (sum of incident edge matches) ----------
-totals <- pairs %>%
-  select(model_a, model_b, matches) %>%
-  pivot_longer(c(model_a, model_b), names_to = "side", values_to = "model") %>%
-  group_by(model) %>%
-  summarise(total_matches = sum(matches, na.rm = TRUE), .groups = "drop")
-
-# success rate bins for legend + node popups
-nodes2 <- model_summary %>%
-  select(model, success_rate) %>%
-  rename(id = model) %>%
-  left_join(totals, by = c("id" = "model")) %>%     # ADDED
-  mutate(
-    success_bin = cut(
-      success_rate,
-      breaks = seq(min(success_rate, na.rm = TRUE),  # ADDED: na.rm for safety
-                   max(success_rate, na.rm = TRUE),
-                   length.out = 7),
-      include.lowest = TRUE
-    ),
-    color = viridisLite::viridis(6)[as.integer(success_bin)],
-    label = id,
-    font.color = color,
-    # ADDED: tooltip content
-    title = paste0(
-      "<b>", id, "</b><br>",
-      "Success rate: ", percent(success_rate, accuracy = 0.1), "<br>",
-      "Total matches: ", ifelse(is.na(total_matches), 0, total_matches)
-    )
-  )
-
-# --- NEW: empirical head-to-head outcome probabilities per unordered pair ----
-edge_probs <- data %>%
-  transmute(
-    A = pmin(model_a, model_b),
-    B = pmax(model_a, model_b),
-    res = case_when(
-      winner %in% c("tie","both_bad") ~ "tie",
-      winner == "model_a" & model_a <= model_b ~ "A_win",
-      winner == "model_b" & model_a  > model_b ~ "A_win",
-      winner == "model_b" & model_a <= model_b ~ "B_win",
-      winner == "model_a" & model_a  > model_b ~ "B_win",
-      TRUE ~ NA_character_
-    )
-  ) %>%
-  filter(!is.na(res), A != B) %>%
-  count(A, B, res) %>%
-  tidyr::pivot_wider(
-    names_from = res, values_from = n, values_fill = 0
-  ) %>%
-  mutate(
-    total = A_win + B_win + tie,
-    pA = ifelse(total > 0, A_win / total, NA_real_),  # P(A beats B)
-    pB = ifelse(total > 0, B_win / total, NA_real_),  # P(B beats A)
-    pT = ifelse(total > 0, tie   / total, NA_real_)   # tie rate
-  )
-
-# --- NEW: join probabilities onto your existing pairs in a direction-aware way
-pairs_with_probs <- pairs %>%
-  mutate(A = pmin(model_a, model_b),
-         B = pmax(model_a, model_b)) %>%
-  left_join(edge_probs, by = c("A","B")) %>%
-  mutate(
-    from = model_a, to = model_b,
-    p_from = if_else(model_a <= model_b, pA, pB),
-    p_to   = if_else(model_a <= model_b, pB, pA),
-    tie_rate = pT
-  )
-
-# darker greys, first one darker manually (keep your palette)
-edge_palette <- RColorBrewer::brewer.pal(6, "Greys")
-edge_palette[1] <- "#6f6f6f"
-
-vn_edges2 <- pairs_with_probs %>%
-  transmute(
-    from, to,
-    width = pmax(1, round(log1p(matches))),
-    color = edge_palette[as.integer(match_bin)],
-    # Edge label now includes matchups + probabilities (rounded to 2dp)
-    title = sprintf(
-      "<b>%s ↔ %s</b><br>Matches: %d<br>%s win prob: %.2f%%<br>%s win prob: %.2f%%%s",
-      from, to, matches,
-      from, 100 * p_from,
-      to,   100 * p_to,
-      ifelse(is.na(tie_rate), "", sprintf("<br>Tie rate: %.2f%%", 100 * tie_rate))
-    ),
-    smooth = FALSE
-  )
-
-visNetwork(nodes2, vn_edges2, width = "100%", height = "800px") %>%
-  visIgraphLayout(layout = "layout_with_fr") %>%
-  visPhysics(enabled = FALSE) %>%
-  visInteraction(dragView = TRUE, zoomView = TRUE) %>%
-  visOptions(
-    nodesIdSelection = TRUE,                         # ADDED (search box)
-    highlightNearest = list(enabled = TRUE, degree = 1, hover = TRUE)  # ADDED (nice-to-have)
-  ) %>%
-  visLegend(
-    addEdges = data.frame(
-      label = levels(pairs$match_bin),
-      color = edge_palette
-    ),
-    addNodes = data.frame(
-      label = levels(nodes2$success_bin),
-      color = viridisLite::viridis(6)
-    ),
-    useGroups = FALSE,
-    width = 0.25
-  )
 ```
 
 ## Limitations
