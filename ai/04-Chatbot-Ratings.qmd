@@ -70,6 +70,7 @@ library(bslib)
 library(tibble)
 library(htmlwidgets)
 library(DT)
+library(rlang)
 
 # load data
 data <- readRDS("data.rds")
@@ -109,119 +110,147 @@ data <- data %>%
 Includes overall leaderboard and option to filter by category and match-up model.
 
 ```{r}
-all_categories <- sort(unique(data$category))
+stopifnot(all(c("model_a","model_b","winner","category") %in% names(data)))
 
-stopifnot("category" %in% names(data))
+# ---------------- Helpers ----------------
 
-# Wilson CI for a proportion (used by Details table)
+# Expand each match into (model, category, win/tie) for both sides
+# NOTE: For leaderboard & category profile we DO NOT count 'both_bad' as tie.
+make_df2_leader <- function(df) {
+  df %>%
+    mutate(
+      a_win = as.integer(winner == "model_a"),
+      b_win = as.integer(winner == "model_b"),
+      a_tie = as.integer(winner == "tie"),
+      b_tie = a_tie
+    ) %>%
+    pivot_longer(c(model_a, model_b), names_to = "side", values_to = "model") %>%
+    mutate(
+      win = if_else(side == "model_a", a_win, b_win),
+      tie = if_else(side == "model_a", a_tie, b_tie)
+    )
+}
+
+# Wilson CI for proportion
 wilson_ci <- function(successes, n, z = 1.96) {
   ifelse(n > 0, {
     phat <- successes / n
     denom <- 1 + (z^2)/n
     center <- (phat + (z^2)/(2*n)) / denom
     half   <- (z * sqrt((phat*(1-phat) + (z^2)/(4*n))/n)) / denom
-    tibble::tibble(lower = pmax(0, center - half), upper = pmin(1, center + half))
-  }, tibble::tibble(lower = NA_real_, upper = NA_real_))
+    tibble(lower = pmax(0, center - half), upper = pmin(1, center + half))
+  }, tibble(lower = NA_real_, upper = NA_real_))
 }
 
-prof_all_models <- sort(unique(c(data$model_a, data$model_b)))
-prof_all_categories <- sort(unique(data$category))
+all_categories <- sort(unique(data$category))
+
+# ---------------- UI ----------------
 
 ui <- fluidPage(
   theme = bs_theme(bootswatch = "flatly"),
+  br(),
+  titlePanel(div("Chatbot Performance and Ratings",
+                 style = "padding-bottom: 20px;"
+            )
+  ),
+  br(),
   sidebarLayout(
     sidebarPanel(
       class = "sticky-top",
-      # View scope (Overall or a single category)
+      h4("Global Filters"),
+      # View scope (Overall or one category)
       selectInput(
-        "view_mode", "View:",
+        "view_mode", "Category:",
         choices = c("Overall", all_categories),
         selected = "Overall"
       ),
-
-      # Only show category multi-select when view_mode is Overall
       conditionalPanel(
         condition = "input.view_mode == 'Overall'",
         selectizeInput(
-          "cat", "Filter categories (Overall):",
+          "cat", "Filter Categories:",
           choices = all_categories, selected = all_categories,
           multiple = TRUE, options = list(plugins = list("remove_button"))
         )
       ),
-
-      # sort control
-      selectInput(
-        "sort_by", "Sort leaderboard by:",
-        choices = c("Success rate", "Win rate"),
-        selected = "Success rate"
-      ),
-      
-      # Shared controls
-      sliderInput("min_matches", "Min matches (for leaderboard rows)", min = 1, max = 500, value = 30, step = 1),
-      
-      # categories
-      hr(),
-      h4("Category Profile"),
-      selectInput("prof_model", "Choose a model:", choices = prof_all_models, selected = prof_all_models[1]),
-      selectizeInput(
-        "prof_cats", "Categories:",
-        choices = prof_all_categories, selected = prof_all_categories,
-        multiple = TRUE, options = list(plugins = list("remove_button"))
-      ),
-      sliderInput("prof_min_n", "Min matches per category", min = 1, max = 200, value = 25, step = 1),
-      checkboxInput("prof_use_success", "Use Success Rate (Win + 0.5×Tie)", value = TRUE),
-      checkboxInput("prof_show_ci", "Show 95% CIs in table", value = TRUE),
-      
-      # head-to-head
-      hr(),
-      h4("Predicted vs Others"),
-      selectInput("bt_model", "Choose a model:", choices = NULL)
-    
+      sliderInput("min_matches", "Minimum Matches", min = 1, max = 500, value = 30, step = 1)
     ),
     mainPanel(
+
       # ---- Leaderboard Card ----
+      h3("Best Chatbots by Prompt Category"),
       bslib::card(
         full_screen = TRUE, collapsible = TRUE, collapsed = FALSE,
-        bslib::card_header(textOutput("main_title")),
+        bslib::card_header(
+          div(style="display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;",
+              div(style="font-weight:600;", textOutput("main_title")),
+              div(
+                selectInput(
+                  "sort_by", "Sort leaderboard by:",
+                  choices = c("Success rate", "Win rate"),
+                  selected = "Success rate", width = "220px"
+                )
+              )
+          )
+        ),
         bslib::card_body(
-          div(style = "font-weight:600; font-size:16px; margin-bottom:8px;",
-              textOutput("subtitle")),
+          div(style = "font-weight:600; font-size:16px; margin-bottom:8px;", 
+              "Sorted Bar Chart"),
           echarts4rOutput("main_chart", height = "600px"),
           tags$hr(),
-          div(style = "font-weight:600; margin:8px 0;", "Sortable table"),
+          div(style = "font-weight:600; margin:8px 0;", "Table of Rates"),
           DTOutput("main_table")
         )
       ),
-    
-      # ---- Category Profile Card (combined) ----
+
+      # ---- Category Profile Card ----
+      br(),
+      h3("Chatbot Strength & Weaknesses by Category"),
       bslib::card(
         full_screen = TRUE, collapsible = TRUE, collapsed = FALSE,
-        bslib::card_header(textOutput("prof_title_bar")),
+        bslib::card_header(
+          div(style="display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;",
+              div(style="font-weight:600;", textOutput("prof_title_bar")),
+              div(
+                selectInput("prof_model", "Selected model:", choices = NULL, width = "280px")
+              )
+          )
+        ),
         bslib::card_body(
-          # Bar chart (model vs category average)
+          # Card-local toggles
+          div(style="display:flex; gap:20px; flex-wrap:wrap; align-items:center; margin-bottom:10px;",
+              checkboxInput("prof_use_success", "Use Success Rate (Win + 0.5×Tie)", value = TRUE)
+          ),
+          tags$div(style = "font-weight:600; margin:8px 0;", "Sorted Bar Chart"),
           echarts4rOutput("prof_bar", height = "520px"),
           tags$hr(),
-    
-          # Radar (normalized strengths)
           tags$div(style = "font-weight:600; margin-bottom:6px;",
                    "Strengths & Weaknesses (Radar; normalized within selected categories)"),
           echarts4rOutput("prof_radar", height = "420px"),
           tags$hr(),
-    
-          # Details table
-          tags$div(style = "font-weight:600; margin:8px 0;", "Details by Category"),
-          tableOutput("prof_detail_table")
+          tags$div(style = "font-weight:600; margin:8px 0;", "Table of Rates by Category"),
+          DTOutput("prof_detail_table")
         )
       ),
-    
-      # ---- Bradley–Terry (BT) Card ----
+
+      # ---- Bradley–Terry Card ----
+      br(),
+      h3("Estimated Match-Up Results by Category"),
       bslib::card(
         full_screen = TRUE, collapsible = TRUE, collapsed = FALSE,
-        bslib::card_header(textOutput("bt_title")),   # Title outside chart
+        bslib::card_header(
+          div(style="display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;",
+              div(style="font-weight:600;", textOutput("bt_title")),
+              div(
+                selectInput("bt_model", "Selected model:",
+                            choices = NULL, width = "320px")
+              )
+          )
+        ),
         bslib::card_body(
+          div(style = "font-weight:600; margin:8px 0;", "Sorted Bar Chart"),
           echarts4rOutput("bt_chart", height = "720px"),
-          tags$br(),
-          div(style = "font-weight:600; margin:8px 0;", "Predicted rates (pageable)"),
+          tags$hr(),
+          div(style = "font-weight:600; margin:8px 0;", "Table of Predicted Rates"),
           DTOutput("bt_table")
         )
       )
@@ -229,591 +258,49 @@ ui <- fluidPage(
   )
 )
 
+# ---------------- SERVER ----------------
+
 server <- function(input, output, session){
 
-  # ----- Data scoping (Overall vs one Category) ------------------------------
+  # ----- Scoped data (shared by all cards) -----
   selected_df <- reactive({
     if (identical(input$view_mode, "Overall")) {
       df <- data
       if (!is.null(input$cat) && length(input$cat) > 0) {
-        df <- df %>% dplyr::filter(category %in% input$cat)
+        df <- df %>% filter(category %in% input$cat)
       }
       df
     } else {
-      data %>% dplyr::filter(category == input$view_mode)
+      data %>% filter(category == input$view_mode)
     }
   })
-  
-  # ---------- Category Profile module (independent of leaderboard/BT) ----------
-  
-  # Filter to chosen categories for the profile block
-  prof_filtered <- reactive({
-    req(input$prof_cats)
-    df <- data %>% dplyr::filter(category %in% input$prof_cats)
-    validate(need(nrow(df) > 0, "No rows in selected categories."))
-    df
-  })
-  
-  # Long form per (model, category) with ties only (both_bad NOT counted as tie here)
-  prof_df2 <- reactive({
-    prof_filtered() %>%
-      dplyr::mutate(
-        a_win = as.integer(winner == "model_a"),
-        b_win = as.integer(winner == "model_b"),
-        a_tie = as.integer(winner == "tie"),
-        b_tie = a_tie
-      ) %>%
-      tidyr::pivot_longer(c(model_a, model_b), names_to = "side", values_to = "model") %>%
-      dplyr::mutate(
-        win = dplyr::if_else(side == "model_a", a_win, b_win),
-        tie = dplyr::if_else(side == "model_a", a_tie, b_tie)
-      )
-  })
-  
-  # Per-(model, category) summary
-  prof_model_cat_summary <- reactive({
-    prof_df2() %>%
-      dplyr::group_by(model, category) %>%
-      dplyr::summarise(
-        wins = sum(win),
-        ties = sum(tie),
-        matches = dplyr::n(),
-        win_rate = wins / matches,
-        tie_rate = ties / matches,
-        success_rate = (wins + 0.5 * ties) / matches,
-        .groups = "drop"
-      )
-  })
-  
-  # Selected model profile + category benchmark (weighted by per-model matches)
-  prof_sel_profile <- reactive({
-    req(input$prof_model)
-    metric <- if (isTRUE(input$prof_use_success)) "success_rate" else "win_rate"
-    mcs <- prof_model_cat_summary()
-  
-    me <- mcs %>%
-      dplyr::filter(model == input$prof_model) %>%
-      dplyr::rename(model_matches = matches)
-  
-    bench <- mcs %>%
-      dplyr::group_by(category) %>%
-      dplyr::summarise(
-        bench = stats::weighted.mean(.data[[metric]], w = .data$matches),
-        total_matches = sum(.data$matches),
-        .groups = "drop"
-      )
-  
-    me %>%
-      dplyr::inner_join(bench, by = "category") %>%
-      dplyr::mutate(
-        metric = .data[[metric]],
-        lift = metric - bench
-      ) %>%
-      dplyr::filter(model_matches >= input$prof_min_n) %>%
-      dplyr::arrange(dplyr::desc(metric))
-  })
-  
-  # Title
-  output$prof_title_bar <- renderText({
-    paste0(
-      "Category Profile for ", input$prof_model, " — ",
-      if (isTRUE(input$prof_use_success)) "Success Rate (Win + 0.5×Tie)" else "Win Rate",
-      "  |  Min matches: ", input$prof_min_n
-    )
-  })
-  
-  # BAR: model vs category average (with lift tooltip)
-  output$prof_bar <- renderEcharts4r({
-    prof <- prof_sel_profile()
-  
-    prof <- prof %>%
-      dplyr::filter(is.finite(metric), is.finite(bench)) %>%
-      dplyr::mutate(
-        metric = ifelse(is.na(metric), 0, metric),
-        bench  = ifelse(is.na(bench),  0, bench)
-      )
-  
-    validate(need(nrow(prof) > 0, "No categories meet the minimum matches threshold."))
-  
-    chart_df <- prof %>%
-      dplyr::arrange(dplyr::desc(metric)) %>%
-      dplyr::mutate(
-        cat_lab = sprintf("%s  (n=%d)", category, model_matches),
-        my_val  = round(metric, 6),
-        bench_r = round(bench,  6)
-      )
-  
-    chart_df |>
-      e_charts(cat_lab) |>
-      e_bar(
-        my_val, name = input$prof_model,
-        label = list(
-          show = TRUE, position = "insideRight",
-          color = "#fff", fontSize = 10,
-          formatter = htmlwidgets::JS(
-            "function(p){
-               if(p.value == null || !isFinite(p.value)) return '';
-               return (p.value*100).toFixed(0) + '%';
-             }")
-        )
-      ) |>
-      e_line(
-        bench_r, name = "Category Avg", y_index = 0,
-        symbol = "circle", symbolSize = 6
-      ) |>
-      e_tooltip(
-        trigger = "axis",
-        formatter = htmlwidgets::JS(
-          "function (params) {
-             const bar  = params.find(p => p.seriesName !== 'Category Avg');
-             const line = params.find(p => p.seriesName === 'Category Avg');
-             const vBar  = (bar  && isFinite(bar.value))  ? bar.value  : 0;
-             const vLine = (line && isFinite(line.value)) ? line.value : 0;
-             const lift  = (vBar - vLine)*100;
-             return params[0].axisValue + '<br/>' +
-                    bar.seriesName + ': ' + (vBar*100).toFixed(1) + '%<br/>' +
-                    'Category Avg: ' + (vLine*100).toFixed(1) + '%<br/>' +
-                    'Lift: ' + lift.toFixed(1) + ' pts';
-           }")
-      ) |>
-      e_flip_coords() |>
-      e_y_axis(inverse = TRUE) |>
-      e_title("Model vs Category Average") |>
-      e_x_axis(
-        max = 1,
-        axisLabel = list(formatter = htmlwidgets::JS(
-          "function(x){ return (x*100).toFixed(0)+'%'; }"))
-      ) |>
-      e_axis_labels(
-        y = "Category (n = matches)",
-        x = if (isTRUE(input$prof_use_success)) "Success Rate" else "Win Rate"
-      ) |>
-      e_grid(left = 170) |>
-      e_legend(right = 10, top = 30) |>
-      e_datazoom(y_index = 0, type = "slider") |>
-      e_theme("infographic") |>
-      e_toolbox_feature("saveAsImage")
-  })
-  
-  # RADAR: normalized strengths (0–1 within selected categories)
-  output$prof_radar <- renderEcharts4r({
-    mcs <- prof_model_cat_summary() %>% dplyr::filter(matches >= input$prof_min_n)
-    metric <- if (isTRUE(input$prof_use_success)) "success_rate" else "win_rate"
-  
-    cat_minmax <- mcs %>%
-      dplyr::group_by(category) %>%
-      dplyr::summarise(
-        mn = suppressWarnings(min(.data[[metric]], na.rm = TRUE)),
-        mx = suppressWarnings(max(.data[[metric]], na.rm = TRUE)),
-        .groups = "drop"
-      )
-  
-    me <- mcs %>%
-      dplyr::filter(model == input$prof_model) %>%
-      dplyr::inner_join(cat_minmax, by = "category") %>%
-      dplyr::mutate(
-        val = dplyr::case_when(
-          is.finite(mx) & is.finite(mn) & mx > mn ~ ( .data[[metric]] - mn ) / (mx - mn),
-          TRUE ~ 0.5
-        )
-      ) %>%
-      dplyr::arrange(category) %>%
-      dplyr::filter(is.finite(val))
-  
-    validate(need(nrow(me) >= 3, "Not enough categories with sufficient matches for radar."))
-  
-    df_wide <- me %>%
-      dplyr::select(category, val) %>%
-      tidyr::pivot_wider(names_from = category, values_from = val) %>%
-      dplyr::mutate(across(dplyr::everything(), ~ ifelse(is.na(.x), 0.5, .x))) %>%
-      dplyr::mutate(model = input$prof_model)
-  
-    cat_cols <- setdiff(names(df_wide), "model")
-    validate(need(length(cat_cols) >= 3, "Radar needs ≥ 3 categories."))
-  
-    indicator_list <- lapply(cat_cols, function(nm) list(name = nm, max = 1))
-  
-    df_wide |>
-      e_charts(model) |>
-      e_radar(!!!rlang::syms(cat_cols), name = input$prof_model) |>
-      e_radar_opts(indicator = indicator_list) |>
-      e_title("Normalized Strengths by Category (0–1 within chosen categories)") |>
-      e_tooltip(trigger = "item") |>
-      e_theme("infographic")
-  })
-  
-  # DETAILS table (with optional 95% Wilson CI)
-  output$prof_detail_table <- renderTable({
-    prof <- prof_sel_profile()
-    metric <- if (isTRUE(input$prof_use_success)) "success_rate" else "win_rate"
-  
-    if (isTRUE(input$prof_use_success)) {
-      ci <- wilson_ci(successes = prof$wins + 0.5 * prof$ties, n = prof$model_matches)
-    } else {
-      ci <- wilson_ci(successes = prof$wins, n = prof$model_matches)
-    }
-  
-    tibble::tibble(
-      Category = prof$category,
-      `Matches (model)` = prof$model_matches,
-      Wins = prof$wins,
-      Ties = prof$ties,
-      Rate = scales::percent(prof$metric, accuracy = 0.1),
-      `95% CI` = if (isTRUE(input$prof_show_ci))
-        paste0(scales::percent(ci$lower, 0.1), " – ", scales::percent(ci$upper, 0.1))
-        else NA_character_,
-      `Category Avg` = scales::percent(prof$bench, 0.1),
-      `Lift (pts)` = round(100 * prof$lift, 1),
-      `Matches (category total)` = prof$total_matches
-    )
-  },
-  striped = TRUE,
-  bordered = FALSE,
-  spacing = "m",
-  align = "lrrrccrrr"
-  )
-  
-  # BT head-to-head
-  bt_scoped_data <- reactive({
-    # Fit on ALL scoped matches; no global min-matches here.
-    selected_df()
-  })
-  
-  bt_scope_label <- reactive({
-    if (identical(input$view_mode, "Overall")) {
-      cats <- if (is.null(input$cat) || !length(input$cat)) "All categories" else paste(input$cat, collapse = ", ")
-      paste0("Overall (", cats, ")")
-    } else {
-      paste0("Category: ", input$view_mode)
-    }
-  })
-  
-  bt_title_text <- reactive({
-    paste0(
-      "Predicted probability of winning against ", input$bt_model,
-      " (min matches = ", input$min_matches, ") | ",
-      bt_scope_label()
-    )
-  })
-  
-  output$bt_title <- renderText(bt_title_text())
-  
-  # Order models by simple empirical success to make the picker friendly
-  bt_model_order <- reactive({
+
+  # All models available under current scope
+  models_available <- reactive({
     df <- selected_df()
-    appear <- df %>%
-      dplyr::select(model_a, model_b) %>%
-      tidyr::pivot_longer(everything(), values_to = "model") %>%
-      dplyr::count(model, name = "appearances")
-    wins <- df %>%
-      dplyr::filter(winner %in% c("model_a","model_b")) %>%
-      dplyr::mutate(winner_model = dplyr::if_else(winner == "model_a", model_a, model_b)) %>%
-      dplyr::count(winner_model, name = "wins") %>%
-      dplyr::rename(model = winner_model)
-    appear %>%
-      dplyr::left_join(wins, by = "model") %>%
-      dplyr::mutate(wins = tidyr::replace_na(wins, 0),
-                    success_rate = wins / appearances) %>%
-      dplyr::arrange(dplyr::desc(success_rate)) %>%
-      dplyr::pull(model)
-  })
-  
-  observeEvent(bt_model_order(), {
-    choices <- bt_model_order()
-    # If no model passes the filter, keep it empty; otherwise select first valid
-    sel <- if (length(choices) && input$bt_model %in% choices) input$bt_model else dplyr::first(choices)
-    updateSelectInput(session, "bt_model", choices = choices, selected = sel)
-  }, ignoreInit = FALSE)
-  
-  # Fit Bradley–Terry model on decisive matches in the current scope
-  bt_bt_fit <- reactive({
-    pair_outcomes <- bt_pair_outcomes()
-    validate(need(nrow(pair_outcomes) > 0, "No pairwise outcomes available in the selected filter."))
-  
-    # --- Keep only the connected component containing the selected model ----
-    edges <- pair_outcomes %>% dplyr::transmute(from = A, to = B)
-    g <- igraph::graph_from_data_frame(edges, directed = FALSE)
-  
-    keep_names <- {
-      comps <- igraph::components(g)
-      if (isTRUE(input$bt_model %in% igraph::V(g)$name)) {
-        vid <- which(igraph::V(g)$name == input$bt_model)
-        comp_id <- comps$membership[vid]
-        names(which(comps$membership == comp_id))
-      } else {
-        names(which(comps$membership == which.max(comps$csize)))
-      }
-    }
-  
-    pair_cc <- pair_outcomes %>%
-      dplyr::filter(A %in% keep_names, B %in% keep_names)
-    validate(need(nrow(pair_cc) > 0, "Selected model is isolated under current filters."))
-  
-    players <- sort(unique(c(pair_cc$A, pair_cc$B)))
-  
-    # Smoothing to reduce separation risk (don’t invent ties)
-    eps <- 0.5
-    A_win_s <- pair_cc$A_win + eps
-    B_win_s <- pair_cc$B_win + eps
-    tie_s   <- pair_cc$tie
-  
-    has_ties <- sum(tie_s, na.rm = TRUE) > 0
-    y <- if (has_ties) cbind(A_win_s, B_win_s, tie_s) else cbind(A_win_s, B_win_s)
-  
-    fit <- tryCatch(
-      BradleyTerry2::BTm(
-        outcome = y,
-        player1 = factor(pair_cc$A, levels = players),
-        player2 = factor(pair_cc$B, levels = players),
-        id = "player",
-        ties = has_ties
-      ),
-      error = function(e) NULL
-    )
-  
-    # If still NULL, return an object that signals "use empirical fallback"
-    if (is.null(fit)) {
-      return(list(
-        fit = NULL,
-        has_ties = has_ties,
-        players = players,
-        mode = "empirical",
-        pair_cc = pair_cc
-      ))
-    }
-  
-    list(
-      fit = fit,
-      has_ties = has_ties,
-      players = players,
-      mode = "model",
-      pair_cc = pair_cc
-    )
-  })
-  
-  bt_abilities <- reactive({
-    fit <- bt_bt_fit()
-    ab <- BradleyTerry2::BTabilities(fit) %>% as.data.frame() %>%
-      tibble::rownames_to_column("model") %>% dplyr::select(model, ability)
-    setNames(ab$ability, ab$model)
-  })
-  
-  bt_pair_counts <- reactive({
-    selected_df() %>%
-      dplyr::transmute(A = pmin(model_a, model_b),
-                       B = pmax(model_a, model_b)) %>%
-      dplyr::filter(A != B) %>%
-      dplyr::summarise(matches = dplyr::n(), .by = c(A, B))
-  })
-  
-  bt_pair_outcomes <- reactive({
-    selected_df() %>%
-      dplyr::transmute(
-        A = pmin(model_a, model_b),
-        B = pmax(model_a, model_b),
-        res = dplyr::case_when(
-          winner %in% c("tie", "both_bad") ~ "tie",
-          winner == "model_a" & model_a <= model_b ~ "A_win",
-          winner == "model_b" & model_a  >  model_b ~ "A_win",
-          winner == "model_b" & model_a <= model_b ~ "B_win",
-          winner == "model_a" & model_a  >  model_b ~ "B_win",
-          TRUE ~ NA_character_
-        )
-      ) %>%
-      dplyr::filter(!is.na(res), A != B) %>%
-      dplyr::count(A, B, res) %>%
-      tidyr::pivot_wider(
-        names_from = res, values_from = n, values_fill = 0
-      )
-  })
-  
-  # Build vs-opponents table from abilities + tie rates
-  bt_make_vs_btd <- function(fit_obj, sel, model_choices, pair_counts) {
-    # Ensure we have something to compare to
-    opps_all <- setdiff(model_choices, sel)
-    if (!length(opps_all)) {
-      return(tibble::tibble(
-        opponent = character(), matches_vs_selected = integer(),
-        p_sel_vs_row = numeric(), p_row_vs_sel = numeric(),
-        p_tie_or_both_bad = numeric()
-      ))
-    }
-  
-    players <- fit_obj$players
-    opps <- intersect(opps_all, players)
-    if (!length(opps)) {
-      return(tibble::tibble(
-        opponent = character(), matches_vs_selected = integer(),
-        p_sel_vs_row = numeric(), p_row_vs_sel = numeric(),
-        p_tie_or_both_bad = numeric()
-      ))
-    }
-  
-    # Join total match counts for sel vs opponent (for per-pair threshold & display)
-    base <- tibble::tibble(
-      opponent = opps,
-      A = pmin(sel, opps), B = pmax(sel, opps)
-    ) %>%
-      dplyr::left_join(pair_counts, by = c("A","B")) %>%
-      dplyr::mutate(matches_vs_selected = tidyr::replace_na(matches, 0L)) %>%
-      dplyr::select(opponent, A, B, matches_vs_selected)
-  
-    if (identical(fit_obj$mode, "model") && !is.null(fit_obj$fit)) {
-      # Use BT/BTD predicted probabilities
-      nd <- tibble::tibble(
-        player1 = factor(rep(sel, length(opps)), levels = players),
-        player2 = factor(opps, levels = players)
-      )
-      pr <- as.data.frame(predict(fit_obj$fit, newdata = nd, type = "response"))
-      colnames(pr) <- tolower(colnames(pr))
-      p1 <- pr[["player1"]]
-      p2 <- pr[["player2"]]
-      pt <- if ("tie" %in% colnames(pr)) pr[["tie"]] else rep(0, length(p1))
-  
-      return(base %>%
-        dplyr::mutate(
-          p_sel_vs_row = p1,
-          p_row_vs_sel = p2,
-          p_tie_or_both_bad = pt
-        ) %>%
-        dplyr::select(opponent, matches_vs_selected, p_sel_vs_row, p_row_vs_sel, p_tie_or_both_bad) %>%
-        dplyr::arrange(dplyr::desc(p_row_vs_sel)))
-    }
-  
-    # --- Empirical Dirichlet(1/2,1/2,1/2) fallback (guaranteed finite) ----
-    # Get the per-pair outcome counts inside the fitted component
-    pair_cc <- fit_obj$pair_cc %>%
-      dplyr::select(A, B, A_win, B_win, tie)
-  
-    alpha <- 0.5  # Jeffreys prior
-    emp <- base %>%
-      dplyr::left_join(pair_cc, by = c("A","B")) %>%
-      dplyr::mutate(
-        A_win = tidyr::replace_na(A_win, 0L),
-        B_win = tidyr::replace_na(B_win, 0L),
-        tie   = tidyr::replace_na(tie,   0L),
-        total = A_win + B_win + tie,
-        pA = (A_win + alpha) / (total + 3 * alpha),
-        pB = (B_win + alpha) / (total + 3 * alpha),
-        pT = (tie   + alpha) / (total + 3 * alpha),
-        # map to selected vs row regardless of lexical order
-        p_sel_vs_row = dplyr::if_else(sel <= opponent, pA, pB),
-        p_row_vs_sel = dplyr::if_else(sel <= opponent, pB, pA),
-        p_tie_or_both_bad = pT
-      ) %>%
-      dplyr::select(opponent, matches_vs_selected, p_sel_vs_row, p_row_vs_sel, p_tie_or_both_bad) %>%
-      dplyr::arrange(dplyr::desc(p_row_vs_sel))
-  
-    emp
-  }
-
-  # chart
-  output$bt_chart <- renderEcharts4r({
-    fit_obj  <- bt_bt_fit()
-    pair_cnt <- bt_pair_counts()
-    choices  <- bt_model_order()
-    validate(need(length(choices) > 0, "No models available for the selected filter."))
-  
-    df_all <- bt_make_vs_btd(fit_obj, input$bt_model, choices, pair_cnt)
-  
-    # Per-pair threshold + clean values
-    df <- df_all %>%
-      dplyr::filter(matches_vs_selected >= input$min_matches) %>%
-      tidyr::replace_na(list(p_row_vs_sel = 0, p_tie_or_both_bad = 0)) %>%
-      dplyr::mutate(
-        p_row_vs_sel      = pmin(pmax(p_row_vs_sel, 0), 1),
-        p_tie_or_both_bad = pmin(pmax(p_tie_or_both_bad, 0), 1),
-        rank  = dplyr::row_number(),
-        label = sprintf("#%d  %s", rank, opponent)
-      )
-  
-    validate(need(nrow(df) > 0, "No head-to-head predictions meet the min-matches threshold."))
-  
-    # Default view: Top-10 via dataZoom
-    start_lab <- df$label[1]
-    end_lab   <- df$label[min(10, nrow(df))]
-  
-    df |>
-      e_charts(label) |>
-      # STACKED: Row beats Selected + Tie/both_bad
-      e_bar(p_row_vs_sel,
-            name  = "P(Row beats Selected)",
-            stack = "prob",
-            label = list(show = TRUE, position = "insideRight", fontSize = 10)) |>
-      e_bar(p_tie_or_both_bad,
-            name  = "P(Tie / both_bad)",
-            stack = "prob",
-            label = list(show = TRUE, position = "right", fontSize = 10)) |>
-      e_flip_coords() |>
-      e_y_axis(inverse = TRUE) |>
-      e_legend(show = TRUE, right = 10, top = 40) |>
-      e_title(paste0("Predicted Probabilities vs ", input$bt_model,
-                     " — Row Win + Tie/both_bad (stacked)")) |>
-      e_datazoom(y_index = 0, type = "slider", startValue = start_lab, endValue = end_lab) |>
-      e_datazoom(y_index = 0, type = "inside", startValue = start_lab, endValue = end_lab) |>
-      e_x_axis(
-        max = 1,
-        axisLabel = list(formatter = htmlwidgets::JS("function(x){return (x*100).toFixed(0)+'%';}"))
-      ) |>
-      e_axis_labels(
-        y = "Row Model (ranked by P(row beats selected))",
-        x = "Predicted Probability"
-      ) |>
-      e_grid(left = 240) |>
-      e_tooltip(show = FALSE) |>
-      e_theme("infographic") |>
-      e_toolbox_feature("saveAsImage")
-  })
-
-  # Pageable table of rates
-  output$bt_table <- DT::renderDT({
-    fit      <- bt_bt_fit()
-    pair_cnt <- bt_pair_counts()
-    choices  <- bt_model_order()
-    validate(need(length(choices) > 0, "No models available for the selected filter."))
-  
-    tbl <- bt_make_vs_btd(fit, input$bt_model, choices, pair_cnt) %>%
-      dplyr::filter(matches_vs_selected >= input$min_matches)
-    validate(need(nrow(tbl) > 0, "No head-to-head rows meet the min-matches threshold."))
-  
-    DT::datatable(
-      tbl,
-      rownames = FALSE,
-      extensions = "Buttons",
-      options = list(
-        pageLength = 10,                  # default Top-10 via paging
-        lengthMenu = c(5, 10, 25, 50, 100),
-        order = list(list(3, "desc")),    # 0-based: p_row_vs_sel
-        dom = "Bfrtip",
-        buttons = c("copy", "csv", "excel")
-      )
-    ) %>%
-      DT::formatPercentage(
-        columns = c("p_sel_vs_row", "p_row_vs_sel", "p_tie_or_both_bad"),
-        digits = 1
-      )
-  })
-
-  # ----- Leaderboard (per model) ---------------------------------------------
-  make_df2 <- function(df) {
     df %>%
-      mutate(
-        a_win = as.integer(winner == "model_a"),
-        b_win = as.integer(winner == "model_b"),
-        a_tie = as.integer(winner == "tie"),   # <- ONLY "tie" counts as tie
-        b_tie = a_tie                          #    "both_bad" becomes a loss for both
-      ) %>%
-      pivot_longer(c(model_a, model_b), names_to = "side", values_to = "model") %>%
-      mutate(
-        win = if_else(side == "model_a", a_win, b_win),
-        tie = if_else(side == "model_a", a_tie, b_tie)
-      )
-  }
+      select(model_a, model_b) %>%
+      pivot_longer(everything(), values_to = "model") %>%
+      distinct(model) %>%
+      arrange(model) %>%
+      pull(model)
+  })
+
+  # Keep profile & BT model dropdowns in sync with available models
+  observeEvent(models_available(), {
+    ms <- models_available()
+    sel_prof <- if (length(ms) && input$prof_model %in% ms) input$prof_model else dplyr::first(ms)
+    sel_bt   <- if (length(ms) && input$bt_model   %in% ms) input$bt_model   else dplyr::first(ms)
+    updateSelectInput(session, "prof_model", choices = ms, selected = sel_prof)
+    updateSelectInput(session, "bt_model",   choices = ms, selected = sel_bt)
+  }, ignoreInit = FALSE)
+
+  # ============ LEADERBOARD ============
 
   leaderboard <- reactive({
-    df2 <- make_df2(selected_df())
+    df2 <- make_df2_leader(selected_df())
     sort_col <- if (identical(input$sort_by, "Win rate")) "win_rate" else "success_rate"
-  
+
     df2 %>%
       group_by(model) %>%
       summarise(
@@ -826,7 +313,7 @@ server <- function(input, output, session){
         .groups = "drop"
       ) %>%
       filter(matches >= input$min_matches) %>%
-      arrange(dplyr::desc(.data[[sort_col]])) %>%
+      arrange(desc(.data[[sort_col]])) %>%
       mutate(
         rank     = row_number(),
         label    = sprintf("#%d  %s", rank, model),
@@ -835,28 +322,22 @@ server <- function(input, output, session){
       )
   })
 
-  # ----- Titles ---------------------------------------------------------------
   output$main_title <- renderText({
     scope <- if (identical(input$view_mode, "Overall")) {
       cats <- if (is.null(input$cat) || !length(input$cat)) "All categories"
-              else paste(input$cat, collapse = ", ")
-      paste0("Overall (", cats, ")")
-    } else paste0("Category: ", input$view_mode)
-  
-    paste0("Leaderboard — Win + 0.5×Tie (min matches = ", input$min_matches,
-           ") | ", scope, " | Sorted by: ", input$sort_by)
+      else paste(input$cat, collapse = ", ")
+      paste0("Chatbots Leaderboard (Success Rate = Win Rate + 0.5×Tie Rate)")
+    }
+    scope
   })
 
-  # ----- Chart (Leaderboard only) --------------------------------------------
   output$main_chart <- renderEcharts4r({
     lb <- leaderboard()
     validate(need(nrow(lb) > 0, "No models meet the minimum matches threshold."))
 
-    # dynamic title / x-axis label based on sort choice
     metric_title <- if (identical(input$sort_by, "Win rate")) "Win Rate" else "Success Rate (Win + 0.5×Tie)"
     x_label      <- if (identical(input$sort_by, "Win rate")) "Win Rate" else "Success Rate"
 
-    # Default zoom to top 10
     start_lab <- lb$label[1]
     end_lab   <- lb$label[min(10, nrow(lb))]
 
@@ -868,27 +349,34 @@ server <- function(input, output, session){
             label = list(show = TRUE, position = "right", color = "#000", fontSize = 10)) |>
       e_flip_coords() |>
       e_y_axis(inverse = TRUE) |>
-      e_legend(orient = "vertical", right = 10, top = 40) |>
+      e_legend(right = 10, top = 30) |>
       e_title(paste0("Chatbots Ranked by ", metric_title)) |>
       e_datazoom(y_index = 0, type = "slider", startValue = start_lab, endValue = end_lab) |>
       e_datazoom(y_index = 0, type = "inside", startValue = start_lab, endValue = end_lab) |>
       e_x_axis(max = 1,
                axisLabel = list(formatter = htmlwidgets::JS("function(x){return (x*100).toFixed(0)+'%';}"))) |>
-      e_axis_labels(y = "Model (ranked)", x = x_label) |>
       e_grid(left = 170) |>
       e_tooltip(show = FALSE) |>
       e_theme("infographic") |>
       e_toolbox_feature("saveAsImage")
   })
 
-  # ----- Table (Leaderboard only) --------------------------------------------
   output$main_table <- renderDT({
     lb <- leaderboard()
     validate(need(nrow(lb) > 0, "No models meet the minimum matches threshold."))
     tbl <- lb %>% select(model, wins, ties, matches, win_rate, tie_rate, success_rate)
 
-    # 0-based column index for DT ordering
     order_col <- if (identical(input$sort_by, "Win rate")) 4L else 6L
+    
+    tbl <- tibble(
+      Model = tbl$model,
+      Wins = tbl$wins,
+      Ties = tbl$ties,
+      Matches = tbl$matches,
+      `Win Rate` = tbl$win_rate,
+      `Tie Rate` = tbl$tie_rate,
+      `Success Rate` = tbl$success_rate
+    ) 
 
     datatable(
       tbl,
@@ -902,7 +390,392 @@ server <- function(input, output, session){
         buttons = c("copy", "csv", "excel")
       )
     ) %>%
-      formatPercentage(columns = c("win_rate", "tie_rate", "success_rate"), digits = 1)
+      formatPercentage(columns = c("Win Rate", "Tie Rate", "Success Rate"), digits = 1)
+  })
+
+  # ============ CATEGORY PROFILE ============
+
+  df2_profile <- reactive({
+    make_df2_leader(selected_df())
+  })
+
+  model_cat_summary <- reactive({
+    df2_profile() %>%
+      group_by(model, category) %>%
+      summarise(
+        wins = sum(win),
+        ties = sum(tie),
+        matches = n(),
+        win_rate = wins / matches,
+        tie_rate = ties / matches,
+        success_rate = (wins + 0.5 * ties) / matches,
+        .groups = "drop"
+      )
+  })
+
+  sel_profile <- reactive({
+    metric <- if (isTRUE(input$prof_use_success)) "success_rate" else "win_rate"
+    mcs <- model_cat_summary()
+
+    me <- mcs %>%
+      filter(model == input$prof_model) %>%
+      rename(model_matches = matches)
+
+    bench <- mcs %>%
+      group_by(category) %>%
+      summarise(
+        bench = weighted.mean(.data[[metric]], w = .data$matches),
+        total_matches = sum(.data$matches),
+        .groups = "drop"
+      )
+
+    me %>%
+      inner_join(bench, by = "category") %>%
+      mutate(
+        metric = .data[[metric]],
+        lift = metric - bench
+      ) %>%
+      filter(model_matches >= input$min_matches) %>%
+      arrange(desc(metric))
+  })
+
+  output$prof_title_bar <- renderText({
+    scope <- if (identical(input$view_mode, "Overall")) {
+      cats <- if (is.null(input$cat) || !length(input$cat)) "All categories"
+      else paste(input$cat, collapse = ", ")
+      paste0("Category Profile for ", input$prof_model)
+    }
+    scope
+  })
+
+  output$prof_bar <- renderEcharts4r({
+    validate(
+      need(length(models_available()) > 0, "No models in the current view/filter."),
+      need(!is.null(input$prof_model) && nzchar(input$prof_model), "Select a model to view the profile.")
+    )
+
+    prof <- sel_profile() %>%
+      filter(is.finite(metric), is.finite(bench)) %>%
+      mutate(
+        metric = ifelse(is.na(metric), 0, metric),
+        bench  = ifelse(is.na(bench),  0, bench)
+      )
+
+    validate(need(nrow(prof) > 0, "No categories meet the minimum matches threshold."))
+
+    chart_df <- prof %>%
+      arrange(desc(metric)) %>%
+      mutate(
+        cat_lab = sprintf("%s  (n=%d)", category, model_matches),
+        my_val  = round(metric, 6),
+        bench_r = round(bench,  6)
+      )
+
+    chart_df |>
+      e_charts(cat_lab) |>
+      e_bar(
+        my_val, name = input$prof_model,
+        label = list(
+          show = TRUE, position = "insideRight",
+          color = "#fff", fontSize = 10
+        )
+      ) |>
+      e_line(
+        bench_r, 
+        name = "Category Avg", 
+        y_index = 0, 
+        symbol = "circle", 
+        symbolSize = 6,
+        label = list(
+               show = TRUE, position = 'right',
+               color = '#000',fontSize = 10
+             )) |>
+      e_flip_coords() |>
+      e_y_axis(inverse = TRUE) |>
+      e_title("Model vs Category Average") |>
+      e_x_axis(
+        max = 1,
+        axisLabel = list(formatter = htmlwidgets::JS("function(x){ return (x*100).toFixed(0)+'%'; }"))
+      ) |>
+      e_grid(left = 170) |>
+      e_legend(right = 10, top = 30) |>
+      e_datazoom(y_index = 0, type = "slider") |>
+      e_theme("infographic") |>
+      e_toolbox_feature("saveAsImage")
+  })
+
+  output$prof_radar <- renderEcharts4r({
+    mcs <- model_cat_summary() %>% filter(matches >= input$min_matches)
+    metric <- if (isTRUE(input$prof_use_success)) "success_rate" else "win_rate"
+
+    cat_minmax <- mcs %>%
+      group_by(category) %>%
+      summarise(
+        mn = suppressWarnings(min(.data[[metric]], na.rm = TRUE)),
+        mx = suppressWarnings(max(.data[[metric]], na.rm = TRUE)),
+        .groups = "drop"
+      )
+
+    me <- mcs %>%
+      filter(model == input$prof_model) %>%
+      inner_join(cat_minmax, by = "category") %>%
+      mutate(
+        val = case_when(
+          is.finite(mx) & is.finite(mn) & mx > mn ~ (.data[[metric]] - mn) / (mx - mn),
+          TRUE ~ 0.5
+        )
+      ) %>%
+      arrange(category) %>%
+      filter(is.finite(val))
+
+    validate(need(nrow(me) >= 3, "Not enough categories with sufficient matches for radar."))
+
+    df_wide <- me %>%
+      select(category, val) %>%
+      tidyr::pivot_wider(names_from = category, values_from = val) %>%
+      mutate(across(everything(), ~ ifelse(is.na(.x), 0.5, .x))) %>%
+      mutate(model = input$prof_model)
+
+    cat_cols <- setdiff(names(df_wide), "model")
+    validate(need(length(cat_cols) >= 3, "Radar needs ≥ 3 categories."))
+
+    indicator_list <- lapply(cat_cols, function(nm) list(name = nm, max = 1))
+
+    df_wide |>
+      e_charts(model) |>
+      e_radar(!!!rlang::syms(cat_cols), name = input$prof_model) |>
+      e_radar_opts(indicator = indicator_list) |>
+      e_title("Normalized Strengths by Category (0–1 within chosen categories)") |>
+      e_tooltip(trigger = "item") |>
+      e_theme("infographic")
+  })
+
+  output$prof_detail_table <- DT::renderDT({
+    validate(
+      need(length(models_available()) > 0, "No models in the current view/filter."),
+      need(!is.null(input$prof_model) && nzchar(input$prof_model), "Select a model to view the profile.")
+    )
+
+    mcs <- model_cat_summary()
+    metric_name <- if (isTRUE(input$prof_use_success)) "success_rate" else "win_rate"
+
+    prof <- mcs %>%
+      filter(model == input$prof_model) %>%
+      rename(model_matches = matches)
+
+    bench <- mcs %>%
+      group_by(category) %>%
+      summarise(
+        bench = weighted.mean(.data[[metric_name]], w = .data$matches),
+        total_matches = sum(.data$matches),
+        .groups = "drop"
+      )
+
+    prof <- prof %>%
+      inner_join(bench, by = "category") %>%
+      mutate(
+        metric = .data[[metric_name]],
+        lift = metric - bench
+      ) %>%
+      filter(model_matches >= input$min_matches) %>%
+      arrange(desc(metric))
+
+    validate(need(nrow(prof) > 0, "No categories meet the minimum matches threshold."))
+
+    if (isTRUE(input$prof_use_success)) {
+      ci <- wilson_ci(successes = prof$wins + 0.5 * prof$ties, n = prof$model_matches)
+    } else {
+      ci <- wilson_ci(successes = prof$wins, n = prof$model_matches)
+    }
+
+    tbl <- tibble(
+      Category = prof$category,
+      `Matches (model)` = prof$model_matches,
+      Wins = prof$wins,
+      Ties = prof$ties,
+      Rate = prof$metric,
+      `Category Avg` = prof$bench,
+      `Lift (pts)` = round(100 * prof$lift, 1),
+      `Matches (category total)` = prof$total_matches
+    )
+
+    DT::datatable(
+      tbl,
+      rownames = FALSE,
+      extensions = "Buttons",
+      options = list(
+        pageLength = 10,
+        lengthMenu = c(5, 10, 25, 50, 100),
+        order = list(list(4, "desc")), # Rate
+        dom = "Bfrtip",
+        buttons = c("copy", "csv", "excel")
+      )
+    ) %>%
+      DT::formatPercentage(columns = c("Rate", "Category Avg"), digits = 1)
+  })
+
+  # ============ BRADLEY–TERRY (decisive-only fit) ============
+
+  # Pair counts including ties & both_bad for per-pair filtering and for p_tie_or_both_bad
+  bt_pair_counts <- reactive({
+    selected_df() %>%
+      transmute(
+        A = pmin(model_a, model_b),
+        B = pmax(model_a, model_b),
+        is_tie_or_bb = as.integer(winner %in% c("tie","both_bad"))
+      ) %>%
+      filter(A != B) %>%
+      summarise(
+        matches = dplyr::n(),
+        ties_or_bb = sum(is_tie_or_bb),
+        .by = c(A, B)
+      )
+  })
+
+  # Safe BT fit on decisive matches (no ties/both_bad in the likelihood)
+  bt_fit <- reactive({
+    df <- selected_df() %>%
+      filter(winner %in% c("model_a", "model_b")) %>%
+      transmute(
+        player1 = model_a,
+        player2 = model_b,
+        r1 = as.numeric(winner == "model_a"),
+        r2 = as.numeric(winner == "model_b")
+      )
+
+    validate(need(nrow(df) > 0, "No decisive matches in the selected filter."))
+
+    players <- sort(unique(c(df$player1, df$player2)))
+    df <- df %>% mutate(
+      player1 = factor(player1, levels = players),
+      player2 = factor(player2, levels = players)
+    )
+
+    fit <- tryCatch(
+      BTm(cbind(r1, r2), player1, player2, data = df, id = "player"),
+      error = function(e) NULL
+    )
+    validate(need(!is.null(fit), "BT model failed to fit for the selected filter (disconnected or separable)."))
+    fit
+  })
+
+  bt_abilities <- reactive({
+    fit <- bt_fit()
+    ab <- BTabilities(fit) %>% as.data.frame() %>% tibble::rownames_to_column("model") %>% select(model, ability)
+    setNames(ab$ability, ab$model)
+  })
+
+  # Build predicted rates table for the selected model
+  bt_make_vs <- function(sel, model_choices, ab_map, pair_counts) {
+    opps <- setdiff(model_choices, sel)
+    if (!(sel %in% names(ab_map)) || !length(opps)) {
+      return(tibble(opponent=character(), matches_vs_selected=integer(),
+                    p_sel_vs_row=numeric(), p_row_vs_sel=numeric(), p_tie_or_both_bad=numeric()))
+    }
+
+    base <- tibble(opponent = opps) %>%
+      mutate(
+        p_sel_vs_row = ifelse(opponent %in% names(ab_map),
+                              plogis(ab_map[sel] - ab_map[opponent]), NA_real_),
+        p_row_vs_sel = ifelse(opponent %in% names(ab_map),
+                              plogis(ab_map[opponent] - ab_map[sel]), NA_real_),
+        A = pmin(sel, opponent), B = pmax(sel, opponent)
+      ) %>%
+      left_join(pair_counts, by = c("A","B")) %>%
+      mutate(
+        matches_vs_selected = round(replace_na(matches, 0L),3),
+        # empirical tie/both_bad rate for this unordered pair
+        p_tie_or_both_bad = round(replace_na(ties_or_bb / pmax(matches, 1), 0),3),
+        p_sel_vs_row = round(replace_na(p_sel_vs_row, 0),3),
+        p_row_vs_sel = round(replace_na(p_row_vs_sel, 0),3)
+      ) %>%
+      select(opponent, matches_vs_selected, p_sel_vs_row, p_row_vs_sel, p_tie_or_both_bad)
+
+    # Keep rows with enough direct matches vs the selected model
+    base %>%
+      filter(matches_vs_selected >= input$min_matches) %>%
+      arrange(desc(p_row_vs_sel))
+  }
+
+  output$bt_title <- renderText({
+    cats_txt <- if (identical(input$view_mode, "Overall")) {
+      cats <- if (is.null(input$cat) || !length(input$cat)) "All categories"
+      else paste(input$cat, collapse = ", ")
+      paste0("One-on-One Match-Up Predicted Win Probabilities Against ", input$bt_model)
+    }
+    cats_txt
+  })
+
+  output$bt_chart <- renderEcharts4r({
+    ab_map   <- bt_abilities()
+    pair_cnt <- bt_pair_counts()
+    choices  <- models_available()
+    validate(need(length(choices) > 0, "No models available for the selected filter."))
+
+    df_all <- bt_make_vs(input$bt_model, choices, ab_map, pair_cnt)
+    validate(need(nrow(df_all) > 0, "No head-to-head predictions meet the min-matches threshold."))
+
+    # Rank labels and default zoom to top-10
+    df <- df_all %>%
+      mutate(rank = row_number(), label = sprintf("#%d  %s", rank, opponent))
+    start_lab <- df$label[1]
+    end_lab   <- df$label[min(10, nrow(df))]
+
+    # Stacked bars: p(row beats selected) + p(tie_or_both_bad)
+    df |>
+      e_charts(label) |>
+      e_bar(p_row_vs_sel, name = "P(Row beats Selected)", stack = "prob",
+            label = list(show = TRUE, position = "insideRight", color = "#fff", fontSize = 10
+                         )
+            ) |>
+      e_bar(p_tie_or_both_bad, name = "P(Tie or Both-bad)", stack = "prob",
+            label = list(show = TRUE, position = "right", color = "#000", fontSize = 10
+                         )
+            ) |>
+      e_flip_coords() |>
+      e_y_axis(inverse = TRUE) |>
+      e_legend(right = 10, top = 30) |>
+      e_title(paste0("Predicted Probability of Winning Against ", input$bt_model)) |>
+      e_datazoom(y_index = 0, type = "slider", startValue = start_lab, endValue = end_lab) |>
+      e_datazoom(y_index = 0, type = "inside", startValue = start_lab, endValue = end_lab) |>
+      e_x_axis(max = 1,
+               axisLabel = list(formatter = htmlwidgets::JS("function(x){return (x*100).toFixed(0)+'%';}"))) |>
+      e_grid(left = 240) |>
+      e_tooltip(show = FALSE) |>
+      e_theme("infographic") |>
+      e_toolbox_feature("saveAsImage")
+  })
+
+  output$bt_table <- DT::renderDT({
+    ab_map   <- bt_abilities()
+    pair_cnt <- bt_pair_counts()
+    choices  <- models_available()
+    validate(need(length(choices) > 0, "No models available for the selected filter."))
+
+    tbl <- bt_make_vs(input$bt_model, choices, ab_map, pair_cnt)
+    validate(need(nrow(tbl) > 0, "No head-to-head rows meet the min-matches threshold."))
+
+    tbl <- tibble(
+      Opponent = tbl$opponent,
+      `# Matches` = tbl$matches_vs_selected,
+      `P(Selected Model Wins)` = tbl$p_sel_vs_row,
+      `P(Opponent Wins)` = tbl$p_row_vs_sel,
+      `P(Tie or Both Bad)` = tbl$p_tie_or_both_bad
+    ) 
+    
+    DT::datatable(
+      tbl,
+      rownames = FALSE,
+      extensions = "Buttons",
+      options = list(
+        pageLength = 10,
+        lengthMenu = c(5, 10, 25, 50, 100),
+        order = list(list(3, "desc")),  # p_row_vs_sel
+        dom = "Bfrtip",
+        buttons = c("copy", "csv", "excel")
+      )
+    ) %>%
+      DT::formatPercentage(columns = c("P(Selected Model Wins)", "P(Opponent Wins)", "P(Tie or Both Bad)"), digits = 1)
   })
 }
 
