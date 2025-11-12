@@ -178,6 +178,10 @@ ui <- fluidPage(
 
       # ---- Leaderboard Card ----
       h3("Best Chatbots by Prompt Category"),
+      div(
+        style = "padding:20px; font-size:15px; line-height:1.5;",
+        p("The leaderboard summarizes model performance across all categories by combining wins, ties, and losses (including 'both bad') into a composite success metric (Win + 0.5×Tie). Each model’s win rate and success rate are calculated from the full dataset of pairwise comparisons, filtering out models that participated in fewer than the minimum number of matches. Models are then ranked according to either win or success rate. Based on current data, the top five chatbots overall (excluding previews) are Gemini 2.5 Pro, Grok 4 0709, o3 2025-04-16, Chat-GPT-4o latest 20250326, and Deep Seek r1 0528. Across specific prompt categories, Gemini 2.5 Pro leads in coding tasks, Grok 4 0709 in math, Gemini 2.5 Pro preview 05-06 in reasoning, Gemini 2.5 Pro preview 05-06 in creative writing, and Gemini 2.5 Pro in 'other' tasks.")
+      ),
       bslib::card(
         full_screen = TRUE, collapsible = TRUE, collapsed = FALSE,
         bslib::card_header(
@@ -205,6 +209,10 @@ ui <- fluidPage(
       # ---- Category Profile Card ----
       br(),
       h3("Chatbot Strength & Weaknesses by Category"),
+      div(
+        style = "padding:20px; font-size:15px; line-height:1.5;",
+        p("The category profile section measures how each chatbot performs within individual categories relative to the weighted category average. For the selected model, the bar chart shows per-category success rates against the mean of all models, while the radar plot normalizes these values to highlight relative strengths and weaknesses across categories This provides an in-depth view of how a single model’s capabilities vary across task types compared to the average.")
+      ),
       bslib::card(
         full_screen = TRUE, collapsible = TRUE, collapsed = FALSE,
         bslib::card_header(
@@ -235,6 +243,10 @@ ui <- fluidPage(
       # ---- Bradley–Terry Card ----
       br(),
       h3("Estimated Match-Up Results by Category"),
+      div(
+        style = "padding:20px; font-size:15px; line-height:1.5;",
+        p("In this section we use the Bradley–Terry model to estimate the latent ability of each chatbot based on head-to-head outcomes.The table and stacked bar chart show the probability that one model defeats another, including the empirical rate of ties or 'both-bad' outcomes. The heatmap summarizes these pairwise win probabilities across all models.")
+      ),
       bslib::card(
         full_screen = TRUE, collapsible = TRUE, collapsed = FALSE,
         bslib::card_header(
