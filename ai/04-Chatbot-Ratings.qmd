@@ -25,6 +25,8 @@ Submit a PDF report with your code and analysis to Gradescope.
 
 ## Setup
 
+The following reads in the data and saves it to a file, "data.rds," which is used for the following analysis.
+
 ```{r, eval=FALSE}
 # read in data and bind rows
 datalist <- vector(mode = "list", length = 7)
@@ -80,6 +82,8 @@ colnames(data)
 
 ## Categories
 
+Each evaluation includes data indicating whether the prompt involved math, coding, creative writing, or if-then reasoning. Because these fields are inconsistent, the following cleans and records the categories.
+
 ```{r}
 data <- data %>%
   mutate(
@@ -107,15 +111,17 @@ data <- data %>%
 
 ## Best Chatbot (Shiny App)
 
-Includes overall leaderboard and option to filter by category and match-up model.
+The following Shiny app provides a way for users to interactively view ratings and comparisons for LLMs.
+
+First, it displays an overall leaderboard that summarizes each model's performance in terms of wins, ties, and a composite success metric (wins + 0.5xties), with filters for prompt category and minimum match count.
+
+The second section looks models individually, showing performance across the various prompt categories relative to the category average.
+
+Finally, a Bradley-Terry model is fit on decisive match outcomes to estimate each model's latent skill and uses these abilities to display head-to-head win probabilities in a heatmap, as well as tables and charts.
 
 ```{r}
 stopifnot(all(c("model_a","model_b","winner","category") %in% names(data)))
 
-# ---------------- Helpers ----------------
-
-# Expand each match into (model, category, win/tie) for both sides
-# NOTE: For leaderboard & category profile we DO NOT count 'both_bad' as tie.
 make_df2_leader <- function(df) {
   df %>%
     mutate(
@@ -131,7 +137,6 @@ make_df2_leader <- function(df) {
     )
 }
 
-# Wilson CI for proportion
 wilson_ci <- function(successes, n, z = 1.96) {
   ifelse(n > 0, {
     phat <- successes / n
@@ -144,21 +149,17 @@ wilson_ci <- function(successes, n, z = 1.96) {
 
 all_categories <- sort(unique(data$category))
 
-# ---------------- UI ----------------
-
 ui <- fluidPage(
   theme = bs_theme(bootswatch = "flatly"),
   br(),
   titlePanel(div("Chatbot Performance and Ratings",
                  style = "padding-bottom: 20px;"
-            )
-  ),
+  )),
   br(),
   sidebarLayout(
     sidebarPanel(
       class = "sticky-top",
       h4("Global Filters"),
-      # View scope (Overall or one category)
       selectInput(
         "view_mode", "Category:",
         choices = c("Overall", all_categories),
@@ -176,11 +177,10 @@ ui <- fluidPage(
     ),
     mainPanel(
 
-      # ---- Leaderboard Card ----
       h3("Best Chatbots by Prompt Category"),
       div(
         style = "padding:20px; font-size:15px; line-height:1.5;",
-        p("The leaderboard summarizes model performance across all categories by combining wins, ties, and losses (including 'both bad') into a composite success metric (Win + 0.5×Tie). Each model’s win rate and success rate are calculated from the full dataset of pairwise comparisons, filtering out models that participated in fewer than the minimum number of matches. Models are then ranked according to either win or success rate. Based on current data, the top five chatbots overall (excluding previews) are Gemini 2.5 Pro, Grok 4 0709, o3 2025-04-16, Chat-GPT-4o latest 20250326, and Deep Seek r1 0528. Across specific prompt categories, Gemini 2.5 Pro leads in coding tasks, Grok 4 0709 in math, Gemini 2.5 Pro preview 05-06 in reasoning, Gemini 2.5 Pro preview 05-06 in creative writing, and Gemini 2.5 Pro in 'other' tasks.")
+        p("The leaderboard summarizes model performance across all categories by combining wins, ties, and losses (including 'both bad') into a composite success metric (Win + 0.5×Tie). Each model’s win rate and success rate are calculated from the full dataset of pairwise comparisons, filtering out models that participated in fewer than the minimum number of matches. Models are then ranked according to either win or success rate.")
       ),
       bslib::card(
         full_screen = TRUE, collapsible = TRUE, collapsed = FALSE,
@@ -206,12 +206,11 @@ ui <- fluidPage(
         )
       ),
 
-      # ---- Category Profile Card ----
       br(),
       h3("Chatbot Strength & Weaknesses by Category"),
       div(
         style = "padding:20px; font-size:15px; line-height:1.5;",
-        p("The category profile section measures how each chatbot performs within individual categories relative to the weighted category average. For the selected model, the bar chart shows per-category success rates against the mean of all models, while the radar plot normalizes these values to highlight relative strengths and weaknesses across categories This provides an in-depth view of how a single model’s capabilities vary across task types compared to the average.")
+        p("The category profile section measures how each chatbot performs within individual categories relative to the weighted category average. For the selected model, the bar chart shows per-category success rates against the mean of all models. This provides an in-depth view of how a single model’s capabilities vary across task types compared to the average.")
       ),
       bslib::card(
         full_screen = TRUE, collapsible = TRUE, collapsed = FALSE,
@@ -224,45 +223,38 @@ ui <- fluidPage(
           )
         ),
         bslib::card_body(
-          # Card-local toggles
           div(style="display:flex; gap:20px; flex-wrap:wrap; align-items:center; margin-bottom:10px;",
               checkboxInput("prof_use_success", "Use Success Rate (Win + 0.5×Tie)", value = TRUE)
           ),
           tags$div(style = "font-weight:600; margin:8px 0;", "Sorted Bar Chart"),
           echarts4rOutput("prof_bar", height = "520px"),
           tags$hr(),
-          tags$div(style = "font-weight:600; margin-bottom:6px;",
-                   "Strengths & Weaknesses (Radar; normalized within selected categories)"),
-          echarts4rOutput("prof_radar", height = "420px"),
-          tags$hr(),
           tags$div(style = "font-weight:600; margin:8px 0;", "Table of Rates by Category"),
           DTOutput("prof_detail_table")
         )
       ),
 
-      # ---- Bradley–Terry Card ----
       br(),
       h3("Estimated Match-Up Results by Category"),
       div(
         style = "padding:20px; font-size:15px; line-height:1.5;",
-        p("In this section we use the Bradley–Terry model to estimate the latent ability of each chatbot based on head-to-head outcomes.The table and stacked bar chart show the probability that one model defeats another, including the empirical rate of ties or 'both-bad' outcomes. The heatmap summarizes these pairwise win probabilities across all models.")
+        p("In this section we use the Bradley–Terry model to estimate the latent ability of each chatbot based on head-to-head outcomes. The heatmap summarizes pairwise win probabilities across all models. Below, for a selected model, the stacked bar chart and table show the probability that one model defeats another, including the empirical rate of ties or 'both-bad' outcomes.")
       ),
       bslib::card(
         full_screen = TRUE, collapsible = TRUE, collapsed = FALSE,
         bslib::card_header(
-          div(style="display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;",
-              div(style="font-weight:600;", textOutput("bt_title")),
-              div(
-                selectInput("bt_model", "Selected model:",
-                            choices = NULL, width = "320px")
-              )
-          )
+          div(style="font-weight:600;", "Bradley–Terry Estimated Match-Ups")
         ),
         bslib::card_body(
-          div(style = "font-weight:600; margin:8px 0;", "Head-to-Head Win Probabilities (Bradley–Terry)"),
+          div(style = "font-weight:600; margin:8px 0;", "Head-to-Head Win Probabilities (Heatmap)"),
           plotlyOutput("bt_heatmap", height = "680px"),
           tags$hr(),
-          div(style = "font-weight:600; margin:8px 0;", "Sorted Bar Chart"),
+          div(
+            style="display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-bottom:8px;",
+            div(style="font-weight:600;", "Detailed Match-Ups for Selected Model"),
+            selectInput("bt_model", "Selected model:", choices = NULL, width = "320px")
+          ),
+          div(style = "font-weight:600; margin:8px 0;", "Head-to-Head Win Probabilities (Bradley–Terry)"),
           echarts4rOutput("bt_chart", height = "720px"),
           tags$hr(),
           div(style = "font-weight:600; margin:8px 0;", "Table of Predicted Rates"),
@@ -273,11 +265,8 @@ ui <- fluidPage(
   )
 )
 
-# ---------------- SERVER ----------------
-
 server <- function(input, output, session){
 
-  # ----- Scoped data (shared by all cards) -----
   selected_df <- reactive({
     if (identical(input$view_mode, "Overall")) {
       df <- data
@@ -290,7 +279,6 @@ server <- function(input, output, session){
     }
   })
 
-  # All models available under current scope
   models_available <- reactive({
     df <- selected_df()
     df %>%
@@ -301,7 +289,6 @@ server <- function(input, output, session){
       pull(model)
   })
 
-  # Keep profile & BT model dropdowns in sync with available models
   observeEvent(models_available(), {
     ms <- models_available()
     sel_prof <- if (length(ms) && input$prof_model %in% ms) input$prof_model else dplyr::first(ms)
@@ -309,8 +296,6 @@ server <- function(input, output, session){
     updateSelectInput(session, "prof_model", choices = ms, selected = sel_prof)
     updateSelectInput(session, "bt_model",   choices = ms, selected = sel_bt)
   }, ignoreInit = FALSE)
-
-  # ============ LEADERBOARD ============
 
   leaderboard <- reactive({
     df2 <- make_df2_leader(selected_df())
@@ -338,12 +323,7 @@ server <- function(input, output, session){
   })
 
   output$main_title <- renderText({
-    scope <- if (identical(input$view_mode, "Overall")) {
-      cats <- if (is.null(input$cat) || !length(input$cat)) "All categories"
-      else paste(input$cat, collapse = ", ")
-      paste0("Chatbots Leaderboard (Success Rate = Win Rate + 0.5×Tie Rate)")
-    }
-    scope
+    "Chatbots Leaderboard (Success Rate = Win Rate + 0.5×Tie Rate)"
   })
 
   output$main_chart <- renderEcharts4r({
@@ -351,7 +331,6 @@ server <- function(input, output, session){
     validate(need(nrow(lb) > 0, "No models meet the minimum matches threshold."))
 
     metric_title <- if (identical(input$sort_by, "Win rate")) "Win Rate" else "Success Rate (Win + 0.5×Tie)"
-    x_label      <- if (identical(input$sort_by, "Win rate")) "Win Rate" else "Success Rate"
 
     start_lab <- lb$label[1]
     end_lab   <- lb$label[min(10, nrow(lb))]
@@ -363,14 +342,15 @@ server <- function(input, output, session){
       e_bar(tie_half, name = "0.5*Tie Rate", stack = "rate",
             label = list(show = TRUE, position = "right", color = "#000", fontSize = 10)) |>
       e_flip_coords() |>
-      e_y_axis(inverse = TRUE) |>
+      e_y_axis(inverse = TRUE,
+               axisLabel = list(fontSize = 11)) |>
       e_legend(right = 10, top = 30) |>
       e_title(paste0("Chatbots Ranked by ", metric_title)) |>
       e_datazoom(y_index = 0, type = "slider", startValue = start_lab, endValue = end_lab) |>
       e_datazoom(y_index = 0, type = "inside", startValue = start_lab, endValue = end_lab) |>
       e_x_axis(max = 1,
                axisLabel = list(formatter = htmlwidgets::JS("function(x){return (x*100).toFixed(0)+'%';}"))) |>
-      e_grid(left = 170) |>
+      e_grid(left = 260) |>   # more room for long model names
       e_tooltip(show = FALSE) |>
       e_theme("infographic") |>
       e_toolbox_feature("saveAsImage")
@@ -407,8 +387,6 @@ server <- function(input, output, session){
     ) %>%
       formatPercentage(columns = c("Win Rate", "Tie Rate", "Success Rate"), digits = 1)
   })
-
-  # ============ CATEGORY PROFILE ============
 
   df2_profile <- reactive({
     make_df2_leader(selected_df())
@@ -455,12 +433,7 @@ server <- function(input, output, session){
   })
 
   output$prof_title_bar <- renderText({
-    scope <- if (identical(input$view_mode, "Overall")) {
-      cats <- if (is.null(input$cat) || !length(input$cat)) "All categories"
-      else paste(input$cat, collapse = ", ")
-      paste0("Category Profile for ", input$prof_model)
-    }
-    scope
+    paste0("Category Profile for ", input$prof_model)
   })
 
   output$prof_bar <- renderEcharts4r({
@@ -502,67 +475,22 @@ server <- function(input, output, session){
         symbol = "circle", 
         symbolSize = 6,
         label = list(
-               show = TRUE, position = 'right',
-               color = '#000',fontSize = 10
-             )) |>
+          show = TRUE, position = 'right',
+          color = '#000',fontSize = 10
+        )) |>
       e_flip_coords() |>
-      e_y_axis(inverse = TRUE) |>
+      e_y_axis(inverse = TRUE,
+               axisLabel = list(fontSize = 11)) |>
       e_title("Model vs Category Average") |>
       e_x_axis(
         max = 1,
         axisLabel = list(formatter = htmlwidgets::JS("function(x){ return (x*100).toFixed(0)+'%'; }"))
       ) |>
-      e_grid(left = 170) |>
+      e_grid(left = 260) |>   # more room for longer category labels
       e_legend(right = 10, top = 30) |>
       e_datazoom(y_index = 0, type = "slider") |>
       e_theme("infographic") |>
       e_toolbox_feature("saveAsImage")
-  })
-
-  output$prof_radar <- renderEcharts4r({
-    mcs <- model_cat_summary() %>% filter(matches >= input$min_matches)
-    metric <- if (isTRUE(input$prof_use_success)) "success_rate" else "win_rate"
-
-    cat_minmax <- mcs %>%
-      group_by(category) %>%
-      summarise(
-        mn = suppressWarnings(min(.data[[metric]], na.rm = TRUE)),
-        mx = suppressWarnings(max(.data[[metric]], na.rm = TRUE)),
-        .groups = "drop"
-      )
-
-    me <- mcs %>%
-      filter(model == input$prof_model) %>%
-      inner_join(cat_minmax, by = "category") %>%
-      mutate(
-        val = case_when(
-          is.finite(mx) & is.finite(mn) & mx > mn ~ (.data[[metric]] - mn) / (mx - mn),
-          TRUE ~ 0.5
-        )
-      ) %>%
-      arrange(category) %>%
-      filter(is.finite(val))
-
-    validate(need(nrow(me) >= 3, "Not enough categories with sufficient matches for radar."))
-
-    df_wide <- me %>%
-      select(category, val) %>%
-      tidyr::pivot_wider(names_from = category, values_from = val) %>%
-      mutate(across(everything(), ~ ifelse(is.na(.x), 0.5, .x))) %>%
-      mutate(model = input$prof_model)
-
-    cat_cols <- setdiff(names(df_wide), "model")
-    validate(need(length(cat_cols) >= 3, "Radar needs ≥ 3 categories."))
-
-    indicator_list <- lapply(cat_cols, function(nm) list(name = nm, max = 1))
-
-    df_wide |>
-      e_charts(model) |>
-      e_radar(!!!rlang::syms(cat_cols), name = input$prof_model) |>
-      e_radar_opts(indicator = indicator_list) |>
-      e_title("Normalized Strengths by Category (0–1 within chosen categories)") |>
-      e_tooltip(trigger = "item") |>
-      e_theme("infographic")
   })
 
   output$prof_detail_table <- DT::renderDT({
@@ -621,7 +549,7 @@ server <- function(input, output, session){
       options = list(
         pageLength = 10,
         lengthMenu = c(5, 10, 25, 50, 100),
-        order = list(list(4, "desc")), # Rate
+        order = list(list(4, "desc")),
         dom = "Bfrtip",
         buttons = c("copy", "csv", "excel")
       )
@@ -629,9 +557,6 @@ server <- function(input, output, session){
       DT::formatPercentage(columns = c("Rate", "Category Avg"), digits = 1)
   })
 
-  # ============ BRADLEY–TERRY (decisive-only fit) ============
-
-  # Pair counts including ties & both_bad for per-pair filtering and for p_tie_or_both_bad
   bt_pair_counts <- reactive({
     selected_df() %>%
       transmute(
@@ -647,7 +572,6 @@ server <- function(input, output, session){
       )
   })
 
-  # Safe BT fit on decisive matches (no ties/both_bad in the likelihood)
   bt_fit <- reactive({
     df <- selected_df() %>%
       filter(winner %in% c("model_a", "model_b")) %>%
@@ -675,29 +599,25 @@ server <- function(input, output, session){
   })
 
   bt_abilities <- reactive({
-      fit <- bt_fit()
-      ab <- BTabilities(fit) %>% as.data.frame() %>% tibble::rownames_to_column("model") %>% select(model, ability)
-      setNames(ab$ability, ab$model)
-    })
-    
+    fit <- bt_fit()
+    ab <- BTabilities(fit) %>% as.data.frame() %>% tibble::rownames_to_column("model") %>% select(model, ability)
+    setNames(ab$ability, ab$model)
+  })
+
   output$bt_heatmap <- renderPlotly({
-    # Abilities (named numeric vector) and available models in scope
-    ab_map   <- bt_abilities()                        # named numeric vector: ability by model
-    choices  <- models_available()                    # models visible in current view/filter
+    ab_map   <- bt_abilities()
+    choices  <- models_available()
   
     validate(need(length(choices) > 1, "Need at least two models to draw the heatmap."))
   
-    # Put abilities into a data frame
     abilities <- tibble(model = names(ab_map), ability = as.numeric(ab_map))
   
-    # Order by leaderboard success_rate (already sorted there)
     lb <- leaderboard()
     validate(need(nrow(lb) > 0, "No leaderboard rows to drive model ordering."))
   
     model_order <- intersect(lb$model, abilities$model)
     validate(need(length(model_order) > 1, "Not enough overlap between BT models and leaderboard models."))
   
-    # Full grid of pairs with P(row beats col) from BT
     grid <- expand.grid(
       row_model = model_order,
       col_model = model_order,
@@ -710,11 +630,9 @@ server <- function(input, output, session){
         )
       )
   
-    # Factors to enforce ordering (rows: top=best; cols: left=best)
     grid$row_model <- factor(grid$row_model, levels = rev(model_order))
     grid$col_model <- factor(grid$col_model, levels = model_order)
   
-    # Hover text
     grid <- grid %>% mutate(
       hover = sprintf("Row: %s<br>Col: %s<br>P(Row beats Col): %s",
                       row_model, col_model,
@@ -728,8 +646,6 @@ server <- function(input, output, session){
         labels = percent_format(accuracy = 1),
         name = "P(Row beats Col)"
       ) +
-      scale_color_identity() +
-      scale_linewidth_identity() +
       coord_equal() +
       labs(
         title = "Head-to-Head Win Probabilities (Bradley–Terry)",
@@ -739,7 +655,7 @@ server <- function(input, output, session){
       theme_minimal(base_size = 13) +
       theme(
         plot.title.position = "plot",
-        axis.title.x = element_text(margin = margin(t = 0)),  # reduce gap below plot
+        axis.title.x = element_text(margin = margin(t = 0)),
         axis.title.y = element_text(margin = margin(r = 0)),
         axis.text.x = element_text(size = 3, angle = 45, hjust = 1, vjust = 1),
         axis.text.y = element_text(size = 4),
@@ -749,7 +665,6 @@ server <- function(input, output, session){
     ggplotly(p, tooltip = "text")
   })
 
-  # Build predicted rates table for the selected model
   bt_make_vs <- function(sel, model_choices, ab_map, pair_counts) {
     opps <- setdiff(model_choices, sel)
     if (!(sel %in% names(ab_map)) || !length(opps)) {
@@ -767,28 +682,17 @@ server <- function(input, output, session){
       ) %>%
       left_join(pair_counts, by = c("A","B")) %>%
       mutate(
-        matches_vs_selected = round(replace_na(matches, 0L),3),
-        # empirical tie/both_bad rate for this unordered pair
-        p_tie_or_both_bad = round(replace_na(ties_or_bb / pmax(matches, 1), 0),3),
-        p_sel_vs_row = round(replace_na(p_sel_vs_row, 0),3),
-        p_row_vs_sel = round(replace_na(p_row_vs_sel, 0),3)
+        matches_vs_selected = replace_na(matches, 0L),
+        p_tie_or_both_bad = replace_na(ties_or_bb / pmax(matches, 1), 0),
+        p_sel_vs_row = replace_na(p_sel_vs_row, 0),
+        p_row_vs_sel = replace_na(p_row_vs_sel, 0)
       ) %>%
       select(opponent, matches_vs_selected, p_sel_vs_row, p_row_vs_sel, p_tie_or_both_bad)
 
-    # Keep rows with enough direct matches vs the selected model
     base %>%
       filter(matches_vs_selected >= input$min_matches) %>%
-      arrange(desc(p_row_vs_sel))
+      arrange(desc(p_sel_vs_row))
   }
-
-  output$bt_title <- renderText({
-    cats_txt <- if (identical(input$view_mode, "Overall")) {
-      cats <- if (is.null(input$cat) || !length(input$cat)) "All categories"
-      else paste(input$cat, collapse = ", ")
-      paste0("One-on-One Match-Up Predicted Win Probabilities Against ", input$bt_model)
-    }
-    cats_txt
-  })
 
   output$bt_chart <- renderEcharts4r({
     ab_map   <- bt_abilities()
@@ -799,32 +703,29 @@ server <- function(input, output, session){
     df_all <- bt_make_vs(input$bt_model, choices, ab_map, pair_cnt)
     validate(need(nrow(df_all) > 0, "No head-to-head predictions meet the min-matches threshold."))
 
-    # Rank labels and default zoom to top-10
     df <- df_all %>%
       mutate(rank = row_number(), label = sprintf("#%d  %s", rank, opponent))
     start_lab <- df$label[1]
     end_lab   <- df$label[min(10, nrow(df))]
 
-    # Stacked bars: p(row beats selected) + p(tie_or_both_bad)
     df |>
       e_charts(label) |>
-      e_bar(p_row_vs_sel, name = "P(Row beats Selected)", stack = "prob",
+      e_bar(p_sel_vs_row, name = "P(Selected Model Wins)", stack = "prob",
             label = list(show = TRUE, position = "insideRight", color = "#fff", fontSize = 10
-                         )
-            ) |>
+            )) |>
       e_bar(p_tie_or_both_bad, name = "P(Tie or Both-bad)", stack = "prob",
             label = list(show = TRUE, position = "right", color = "#000", fontSize = 10
-                         )
-            ) |>
+            )) |>
       e_flip_coords() |>
-      e_y_axis(inverse = TRUE) |>
+      e_y_axis(inverse = TRUE,
+               axisLabel = list(fontSize = 11)) |>
       e_legend(right = 10, top = 30) |>
-      e_title(paste0("Predicted Probability of Winning Against ", input$bt_model)) |>
+      e_title(paste0("Predicted Matchup Outcomes vs ", input$bt_model)) |>
       e_datazoom(y_index = 0, type = "slider", startValue = start_lab, endValue = end_lab) |>
       e_datazoom(y_index = 0, type = "inside", startValue = start_lab, endValue = end_lab) |>
       e_x_axis(max = 1,
                axisLabel = list(formatter = htmlwidgets::JS("function(x){return (x*100).toFixed(0)+'%';}"))) |>
-      e_grid(left = 240) |>
+      e_grid(left = 260) |>   # more room for long opponent names
       e_tooltip(show = FALSE) |>
       e_theme("infographic") |>
       e_toolbox_feature("saveAsImage")
@@ -854,7 +755,7 @@ server <- function(input, output, session){
       options = list(
         pageLength = 10,
         lengthMenu = c(5, 10, 25, 50, 100),
-        order = list(list(3, "desc")),  # p_row_vs_sel
+        order = list(list(3, "desc")),
         dom = "Bfrtip",
         buttons = c("copy", "csv", "excel")
       )
@@ -864,9 +765,237 @@ server <- function(input, output, session){
 }
 
 shinyApp(ui, server)
+
+
 ```
 
 ## Limitations
+
+The first limitation we looked at was whether models received a balanced/comparable set of prompts. Different models are evaluated on different subsets of tasks, and some appear more frequently in the dataset than others. For example, a certain model may receive easier prompts, newer models may have fewer matchupts, and some pairs may never face each other directly.
+
+```{r}
+# Expand to one row per model per match
+pair_long <- data %>%
+  select(model_a, model_b, category, evaluation_session_id, winner) %>%
+  pivot_longer(c(model_a, model_b),
+               names_to = "side",
+               values_to = "model")
+
+# Number of matches per model overall
+model_match_counts <- pair_long %>%
+  count(model, name = "matches_total") %>%
+  arrange(desc(matches_total))
+
+head(model_match_counts, 15)
+
+# Matches per model *by category*
+model_cat_counts <- pair_long %>%
+  count(model, category, name = "matches") %>%
+  group_by(model) %>%
+  mutate(
+    matches_total = sum(matches),
+    prop_in_cat   = matches / matches_total
+  ) %>%
+  ungroup()
+
+# Look at a few big models
+model_cat_counts %>%
+  filter(matches_total >= 100) %>%
+  arrange(model, desc(matches)) %>%
+  head(40)
+
+```
+
+The following shows match counts for the models, demonstrating that there is a wide range of counts that each model appears.
+
+```{r}
+ggplot(
+  model_match_counts,
+  aes(x = fct_reorder(model, matches_total), y = matches_total)
+) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    x = "Model",
+    y = "Number of appearances in pairwise matches",
+    title = "Match count per model"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    axis.text.y = element_text(size = 8)
+  )
+```
+
+The following Chi-square goodness-of-fit test demonstrates that models appear an unequal number of times.
+
+```{r}
+# Expand to one row per model per match
+pair_long <- data %>%
+  select(model_a, model_b, category) %>%
+  pivot_longer(c(model_a, model_b), names_to="side", values_to="model")
+
+# Count appearances
+model_counts <- pair_long %>%
+  count(model, name = "freq")
+
+# Chi-square test for uniform distribution
+chisq_test_counts <- chisq.test(model_counts$freq)
+
+chisq_test_counts
+
+```
+
+The following shows a 100% stacked bar chart of category mix per model, demonstrating that each model faces different category mixes.
+
+```{r}
+ggplot(
+  model_cat_counts,
+  aes(x = fct_reorder(model, matches_total), y = prop_in_cat, fill = category)
+) +
+  geom_col() +
+  coord_flip() +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  labs(
+    x = "Model",
+    y = "Share of matches in each category",
+    fill = "Category",
+    title = "Category mix for all models"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    axis.text.y = element_text(size = 8)
+  )
+```
+
+The following Chi-square test of independence demonstrates that models receive different mixes of categories.
+
+```{r}
+# Build contingency table: model × category
+model_cat_table <- pair_long %>%
+  count(model, category) %>%
+  pivot_wider(names_from = category, values_from = n, values_fill = 0)
+
+# Convert to matrix for chi-square test
+mat <- as.matrix(model_cat_table[,-1])
+
+# Chi-square test of independence
+chisq_test_cat <- chisq.test(mat)
+
+chisq_test_cat
+
+```
+
+The second limitation we looked into was whether human rater variability and inconsistency may have played a role in the results.
+
+```{r}
+df <- data %>%
+  mutate(
+    outcome = case_when(
+      winner %in% c("model_a", "model_b") ~ "decisive",
+      winner == "tie" ~ "tie",
+      winner == "both_bad" ~ "both_bad",
+      TRUE ~ "other"
+    ),
+    a_win = case_when(
+      winner == "model_a" ~ 1,
+      winner == "model_b" ~ 0,
+      TRUE ~ NA_real_
+    )
+  )
+
+```
+
+First, we look at tie usage and both bad usage.
+
+```{r}
+rater_outcomes <- df %>%
+  group_by(evaluation_session_id) %>%
+  summarise(
+    n = n(),
+    prop_decisive = mean(outcome == "decisive"),
+    prop_tie = mean(outcome == "tie"),
+    prop_both_bad = mean(outcome == "both_bad"),
+    .groups = "drop"
+  ) %>%
+  filter(n >= 10)   # only look at raters with enough data
+
+head(rater_outcomes)
+```
+
+Distribution of tie usage:
+
+```{r}
+ggplot(rater_outcomes, aes(x = prop_tie)) +
+  geom_histogram(bins = 30, fill = "steelblue") +
+  scale_x_continuous(labels = percent) +
+  labs(
+    title = "Distribution of Tie Usage Across Raters",
+    x = "Proportion of matches rated as tie",
+    y = "Number of raters"
+  ) +
+  theme_minimal()
+
+```
+
+Distribution of both bad usage:
+
+```{r}
+ggplot(rater_outcomes, aes(x = prop_both_bad)) +
+  geom_histogram(bins = 30, fill = "tomato") +
+  scale_x_continuous(labels = percent) +
+  labs(
+    title = "Distribution of 'Both Bad' Usage Across Raters",
+    x = "Proportion of matches rated both bad",
+    y = "Number of raters"
+  ) +
+  theme_minimal()
+
+```
+
+The following chi-square test looks into whether outcome distributions are different across raters.
+
+```{r}
+rater_outcome_table <- df %>%
+  filter(outcome %in% c("decisive", "tie", "both_bad")) %>%
+  count(evaluation_session_id, outcome) %>%
+  pivot_wider(names_from = outcome, values_from = n, values_fill = 0)
+
+mat <- as.matrix(rater_outcome_table[,-1])
+
+chisq.test(mat)
+
+```
+
+Next, we see if raters have a side bias (prefer model a vs model b)
+
+```{r}
+rater_side_bias <- df %>%
+  filter(outcome == "decisive") %>%
+  group_by(evaluation_session_id) %>%
+  summarise(
+    n = n(),
+    prop_choose_A = mean(a_win == 1),
+    .groups = "drop"
+  ) %>%
+  filter(n >= 3)
+
+```
+
+```{r}
+ggplot(rater_side_bias, aes(x = prop_choose_A)) +
+  geom_histogram(bins = 30, fill = "purple") +
+  geom_vline(xintercept = 0.5, linetype = "dashed") +
+  scale_x_continuous(labels = percent) +
+  labs(
+    title = "Rater Side Bias (Choosing Model A vs Model B)",
+    x = "Proportion of decisive votes for Model A",
+    y = "Number of raters"
+  ) +
+  theme_minimal()
+
+```
+
+Extra:
 
 ```{r}
 # Count matches per pair and per model — sparsity:
