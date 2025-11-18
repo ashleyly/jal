@@ -992,52 +992,8 @@ ggplot(rater_side_bias, aes(x = prop_choose_A)) +
     y = "Number of raters"
   ) +
   theme_minimal()
-
-```
-
-Extra:
-
-```{r}
-# Count matches per pair and per model — sparsity:
-df2 %>% count(model_a, model_b) %>% arrange(n)  # look for tiny n
-model_summary %>% arrange(matches)  # models with very few matches
-
-# votes per session
-session_votes <- flat_data %>%
-  count(evaluation_session_id)
-
-ggplot(session_votes, aes(n)) +
-  geom_histogram(bins = 40) +
-  pub_theme() +
-  labs(title = "Votes per Session",
-       x = "Votes in Session", y = "Count of Sessions")
-
-# Distribution of judges / sessions: are a small set of users contributing many votes? If you have evaluation_session_id or timestamp, check duplicates:
-df2 %>% count(evaluation_session_id) %>% top_n(20, n)
-
-# Order effect (evaluation_order): does the first-shown model get more votes?
-df2 %>% group_by(evaluation_order) %>%
-  summarise(win_rate_first = mean(if_else(evaluation_order == "A", a_win, b_win)))
-
-# Time trends: models have versions; check timestamps — a model may improve over time.
-library(lubridate)
-df2 %>% mutate(ts = ymd_hms(timestamp)) %>% arrange(ts) %>% 
-  NULL
-
-model_ts <- flat_data %>%
-  filter(model_a == "Claude 3.5 Sonnet") %>%   # example — you can parametrize this
-  mutate(date = as.Date(timestamp)) %>%
-  group_by(date) %>%
-  summarise(success = mean(winner == "model_a" | winner == "tie"*0.5))
-
-ggplot(model_ts, aes(date, success)) +
-  geom_line() +
-  geom_smooth(se = FALSE) +
-  pub_theme() +
-  labs(title = "Time Series Win Rate for Claude 3.5 Sonnet",
-       x = "Date", y = "Success Rate")
 ```
 
 \[insert discussion\]
 
-Short list for your write-up (explain each briefly): Selection bias of prompts: The set of prompts users choose to run is not random. Users may cherry-pick prompts that favor particular models (e.g., models known to be strong at coding get coding prompts). Non-random assignment of pairings: Some models may be pitted against weaker opponents more often. Non-independent judges / vote stuffing: A small set of users could generate many matches and bias results (or coordinated voting). Presentation / ordering effects: The interface might show Model A on the left or highlight one model first; humans have position/anchoring biases. Anonymity revealed post-vote: If users learn model identity after voting, future votes may be biased by familiarity or brand. Ties/Both Bad handling: How ties are scored affects rankings (half-win vs. remove). Model versions change over time: The dataset aggregates across time; newer model versions likely better — mixing versions mixes abilities. Different prompt difficulty across categories: A model may appear strong simply because it faced easier prompts in a category. Judge expertise and calibration: Users differ in domain expertise; uncalibrated judgments (one user prefers different style) add measurement noise. How to game it: Create many accounts / sessions and push desired model to win. Submit prompts that expose known weaknesses in a competitor. Coordinate to flood-match a model against a weak competitor to inflate win-rate. Exploit UI order bias (always vote for left-side model).
+\[edit\] Short list for your write-up (explain each briefly): Selection bias of prompts: The set of prompts users choose to run is not random. Users may cherry-pick prompts that favor particular models (e.g., models known to be strong at coding get coding prompts). Non-random assignment of pairings: Some models may be pitted against weaker opponents more often. Non-independent judges / vote stuffing: A small set of users could generate many matches and bias results (or coordinated voting). Presentation / ordering effects: The interface might show Model A on the left or highlight one model first; humans have position/anchoring biases. Anonymity revealed post-vote: If users learn model identity after voting, future votes may be biased by familiarity or brand. Ties/Both Bad handling: How ties are scored affects rankings (half-win vs. remove). Model versions change over time: The dataset aggregates across time; newer model versions likely better — mixing versions mixes abilities. Different prompt difficulty across categories: A model may appear strong simply because it faced easier prompts in a category. Judge expertise and calibration: Users differ in domain expertise; uncalibrated judgments (one user prefers different style) add measurement noise. How to game it: Create many accounts / sessions and push desired model to win. Submit prompts that expose known weaknesses in a competitor. Coordinate to flood-match a model against a weak competitor to inflate win-rate. Exploit UI order bias (always vote for left-side model).
