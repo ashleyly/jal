@@ -1012,3 +1012,17 @@ total_B <- sum(df$a_win == 0, na.rm = TRUE)
 
 chisq.test(c(total_A, total_B), p = c(0.5, 0.5))
 ```
+
+## Conclusion
+
+This report uses pairwise human preference data from Chatbot Arena to estimate which models perform best overall and in specific categories. By aggregating wins, ties, and losses into a composite success rate and fitting a Bradley-Terry model to decisive outcomes, we obtain a leaderboard of models and matchup probabilities for any pair of chatbots. The Shiny app allows users to view and interact with these results.
+
+Based on the overall leaderboard, gemini-2.5-pro is ranked first by success rate (win + 0.5xtie), followed by gemini-2.5-pro-preview-03-25, grok-4-0709, o3-2025-04-16, and chatgpt-4o-latest-2025032.
+
+These rankings change within specific categories, demonstrating that the answer to which chatbot is best depends on what users are asking about. For example, for creative writing, gemini-2.5-pro-preview-05-06 and llama-4-maverick-03-26-experimental rank highest, while for math, grok-4-0709 and gemini-2.5-pro rank highest. Users can see the exact rankings for all categories using the Shiny App.
+
+We also include a feature that allows users to see the strenghts and weaknesses of each model, as well as estimated match-up results.
+
+There are several potential reasons why data may not be reliable. The data are not balanced across models or categories. Some chatbots appear more often and face very different mixes of prompt types. Users can choose promps that may play to the strengths/weaknesses of particular models. In addition, human raters are not consistent, as some rarely use "Tie" or "Both Bad," while others use them frequently.
+
+Overall, the results show broadly which chatbots are the best, but there are some limitations that should be taken into consideration.
