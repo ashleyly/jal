@@ -19,10 +19,6 @@ Each row is a matchup between two chat bots (e.g. Gemini 2.5 Pro vs Claude Sonne
 
 Which chatbot(s) appears to perform best in the eyes of the judges/users? In a matchup between any two models Model A and Model B, what are the outcome probabilities? How do these change if you focus on specific categories (e.g. writing, math, code, etc.) of prompts? Can you think of any reason the data may not be reliable, or any way this rating system could be "gamed"?
 
-## Submission
-
-Submit a PDF report with your code and analysis to Gradescope.
-
 ## Setup
 
 The following reads in the data and saves it to a file, "data.rds," which is used for the following analysis.
@@ -1015,9 +1011,4 @@ total_A <- sum(df$a_win == 1, na.rm = TRUE)
 total_B <- sum(df$a_win == 0, na.rm = TRUE)
 
 chisq.test(c(total_A, total_B), p = c(0.5, 0.5))
-
 ```
-
-\[insert discussion\]
-
-\[edit\] Short list for your write-up (explain each briefly): Selection bias of prompts: The set of prompts users choose to run is not random. Users may cherry-pick prompts that favor particular models (e.g., models known to be strong at coding get coding prompts). Non-random assignment of pairings: Some models may be pitted against weaker opponents more often. Non-independent judges / vote stuffing: A small set of users could generate many matches and bias results (or coordinated voting). Presentation / ordering effects: The interface might show Model A on the left or highlight one model first; humans have position/anchoring biases. Anonymity revealed post-vote: If users learn model identity after voting, future votes may be biased by familiarity or brand. Ties/Both Bad handling: How ties are scored affects rankings (half-win vs. remove). Model versions change over time: The dataset aggregates across time; newer model versions likely better — mixing versions mixes abilities. Different prompt difficulty across categories: A model may appear strong simply because it faced easier prompts in a category. Judge expertise and calibration: Users differ in domain expertise; uncalibrated judgments (one user prefers different style) add measurement noise. How to game it: Create many accounts / sessions and push desired model to win. Submit prompts that expose known weaknesses in a competitor. Coordinate to flood-match a model against a weak competitor to inflate win-rate. Exploit UI order bias (always vote for left-side model).
