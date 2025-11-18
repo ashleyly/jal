@@ -111,9 +111,9 @@ data <- data %>%
 
 ## Best Chatbot (Shiny App)
 
-The following Shiny app provides a way for users to interactively view ratings and comparisons for LLMs.
+The following Shiny app provides a way for users to interactively view ratings and comparisons for different Chatbots.
 
-First, it displays an overall leaderboard that summarizes each model's performance in terms of wins, ties, and a composite success metric (wins + 0.5xties), with filters for prompt category and minimum match count.
+First, it displays an overall leaderboard that summarizes each model's performance in terms of wins, ties, and a composite success metric (win rate + 0.5\*tie rate), with filters for prompt category and minimum match count.
 
 The second section looks models individually, showing performance across the various prompt categories relative to the category average.
 
@@ -180,7 +180,7 @@ ui <- fluidPage(
       h3("Best Chatbots by Prompt Category"),
       div(
         style = "padding:20px; font-size:15px; line-height:1.5;",
-        p("The leaderboard summarizes model performance across all categories by combining wins, ties, and losses (including 'both bad') into a composite success metric (Win + 0.5×Tie). Each model’s win rate and success rate are calculated from the full dataset of pairwise comparisons, filtering out models that participated in fewer than the minimum number of matches. Models are then ranked according to either win or success rate.")
+        p("The following leaderboard summarizes model performance across categories by combining wins, ties, and losses (including 'both bad') into a composite success metric (Win rate + 0.5×Tie rate). Each model’s win rate and success rate are calculated from the full dataset of pairwise comparisons, filtering out models that participated in fewer than the minimum number of matches. Models are then ranked according to either win or success rate. To change the leaderboard view, use the section view expander on the right side of the chart.")
       ),
       bslib::card(
         full_screen = TRUE, collapsible = TRUE, collapsed = FALSE,
@@ -210,7 +210,7 @@ ui <- fluidPage(
       h3("Chatbot Strength & Weaknesses by Category"),
       div(
         style = "padding:20px; font-size:15px; line-height:1.5;",
-        p("The category profile section measures how each chatbot performs within individual categories relative to the weighted category average. For the selected model, the bar chart shows per-category success rates against the mean of all models. This provides an in-depth view of how a single model’s capabilities vary across task types compared to the average.")
+        p("The category profile section measures how each chatbot performs within individual categories relative to the category average. For the selected model, the bar chart shows per-category success rates against the mean of all models. This provides an in-depth comparative view of how a single model’s capabilities vary across task types.")
       ),
       bslib::card(
         full_screen = TRUE, collapsible = TRUE, collapsed = FALSE,
@@ -238,7 +238,7 @@ ui <- fluidPage(
       h3("Estimated Match-Up Results by Category"),
       div(
         style = "padding:20px; font-size:15px; line-height:1.5;",
-        p("In this section we use the Bradley–Terry model to estimate the latent ability of each chatbot based on head-to-head outcomes. The heatmap summarizes pairwise win probabilities across all models. Below, for a selected model, the stacked bar chart and table show the probability that one model defeats another, including the empirical rate of ties or 'both-bad' outcomes.")
+        p("In this section we use the Bradley–Terry model to estimate the latent ability of each chatbot based on head-to-head outcomes. The Bradley-Terry model assigns a positive score or 'ability' to each item, and the probability of one model beating another is proportional to the ratio of their scores. The heatmap summarizes pairwise win probabilities across all models. Below, for a selected model, the stacked bar chart and table show the probability that one model defeats another, including the empirical rate of ties or 'both-bad' outcomes.")
       ),
       bslib::card(
         full_screen = TRUE, collapsible = TRUE, collapsed = FALSE,
@@ -464,7 +464,7 @@ server <- function(input, output, session){
       e_bar(
         my_val, name = input$prof_model,
         label = list(
-          show = TRUE, position = "insideRight",
+          show = TRUE, position = "insideLeft",
           color = "#fff", fontSize = 10
         )
       ) |>
@@ -713,7 +713,7 @@ server <- function(input, output, session){
       e_bar(p_sel_vs_row, name = "P(Selected Model Wins)", stack = "prob",
             label = list(show = TRUE, position = "insideRight", color = "#fff", fontSize = 10
             )) |>
-      e_bar(p_tie_or_both_bad, name = "P(Tie or Both-bad)", stack = "prob",
+      e_bar(p_tie_or_both_bad, name = "Empirical % Tie or Both Bad", stack = "prob",
             label = list(show = TRUE, position = "right", color = "#000", fontSize = 10
             )) |>
       e_flip_coords() |>
@@ -745,7 +745,7 @@ server <- function(input, output, session){
       `# Matches` = tbl$matches_vs_selected,
       `P(Selected Model Wins)` = tbl$p_sel_vs_row,
       `P(Opponent Wins)` = tbl$p_row_vs_sel,
-      `P(Tie or Both Bad)` = tbl$p_tie_or_both_bad
+      `Empirical % Tie or Both Bad` = tbl$p_tie_or_both_bad
     ) 
     
     DT::datatable(
@@ -760,7 +760,7 @@ server <- function(input, output, session){
         buttons = c("copy", "csv", "excel")
       )
     ) %>%
-      DT::formatPercentage(columns = c("P(Selected Model Wins)", "P(Opponent Wins)", "P(Tie or Both Bad)"), digits = 1)
+      DT::formatPercentage(columns = c("P(Selected Model Wins)", "P(Opponent Wins)", "Empirical % Tie or Both Bad"), digits = 1)
   })
 }
 
@@ -993,7 +993,3 @@ ggplot(rater_side_bias, aes(x = prop_choose_A)) +
   ) +
   theme_minimal()
 ```
-
-\[insert discussion\]
-
-\[edit\] Short list for your write-up (explain each briefly): Selection bias of prompts: The set of prompts users choose to run is not random. Users may cherry-pick prompts that favor particular models (e.g., models known to be strong at coding get coding prompts). Non-random assignment of pairings: Some models may be pitted against weaker opponents more often. Non-independent judges / vote stuffing: A small set of users could generate many matches and bias results (or coordinated voting). Presentation / ordering effects: The interface might show Model A on the left or highlight one model first; humans have position/anchoring biases. Anonymity revealed post-vote: If users learn model identity after voting, future votes may be biased by familiarity or brand. Ties/Both Bad handling: How ties are scored affects rankings (half-win vs. remove). Model versions change over time: The dataset aggregates across time; newer model versions likely better — mixing versions mixes abilities. Different prompt difficulty across categories: A model may appear strong simply because it faced easier prompts in a category. Judge expertise and calibration: Users differ in domain expertise; uncalibrated judgments (one user prefers different style) add measurement noise. How to game it: Create many accounts / sessions and push desired model to win. Submit prompts that expose known weaknesses in a competitor. Coordinate to flood-match a model against a weak competitor to inflate win-rate. Exploit UI order bias (always vote for left-side model).
