@@ -111,7 +111,7 @@ data <- data %>%
 
 ## Best Chatbot (Shiny App)
 
-The following Shiny app provides a way for users to interactively view ratings and comparisons for different Chatbots.
+The following Shiny app provides a way for users to interactively view ratings and comparisons for different Chatbots: <https://leeann-kao.shinyapps.io/chatbotshiny/>
 
 First, it displays an overall leaderboard that summarizes each model's performance in terms of wins, ties, and a composite success metric (win rate + 0.5\*tie rate), with filters for prompt category and minimum match count.
 
