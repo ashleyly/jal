@@ -91,14 +91,6 @@ ui <- fluidPage(
         choices = c("Overall", all_categories),
         selected = "Overall"
       ),
-      conditionalPanel(
-        condition = "input.view_mode == 'Overall'",
-        selectizeInput(
-          "cat", "Filter Categories:",
-          choices = all_categories, selected = all_categories,
-          multiple = TRUE, options = list(plugins = list("remove_button"))
-        )
-      ),
       sliderInput("min_matches", "Minimum Matches", min = 1, max = 500, value = 30, step = 1)
     ),
     mainPanel(
@@ -195,11 +187,7 @@ server <- function(input, output, session){
   
   selected_df <- reactive({
     if (identical(input$view_mode, "Overall")) {
-      df <- data
-      if (!is.null(input$cat) && length(input$cat) > 0) {
-        df <- df %>% filter(category %in% input$cat)
-      }
-      df
+      data
     } else {
       data %>% filter(category == input$view_mode)
     }
