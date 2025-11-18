@@ -106,7 +106,7 @@ ui <- fluidPage(
       h3("Best Chatbots by Prompt Category"),
       div(
         style = "padding:20px; font-size:15px; line-height:1.5;",
-        p("The leaderboard summarizes model performance across all categories by combining wins, ties, and losses (including 'both bad') into a composite success metric (Win + 0.5×Tie). Each model’s win rate and success rate are calculated from the full dataset of pairwise comparisons, filtering out models that participated in fewer than the minimum number of matches. Models are then ranked according to either win or success rate.")
+        p("The following leaderboard summarizes model performance across categories by combining wins, ties, and losses (including 'both bad') into a composite success metric (Win rate + 0.5×Tie rate). Each model’s win rate and success rate are calculated from the full dataset of pairwise comparisons, filtering out models that participated in fewer than the minimum number of matches. Models are then ranked according to either win or success rate. To change the leaderboard view, use the section view expander on the right side of the chart.")
       ),
       bslib::card(
         full_screen = TRUE, collapsible = TRUE, collapsed = FALSE,
@@ -136,7 +136,7 @@ ui <- fluidPage(
       h3("Chatbot Strength & Weaknesses by Category"),
       div(
         style = "padding:20px; font-size:15px; line-height:1.5;",
-        p("The category profile section measures how each chatbot performs within individual categories relative to the weighted category average. For the selected model, the bar chart shows per-category success rates against the mean of all models. This provides an in-depth view of how a single model’s capabilities vary across task types compared to the average.")
+        p("The category profile section measures how each chatbot performs within individual categories relative to the category average. For the selected model, the bar chart shows per-category success rates against the mean of all models. This provides an in-depth comparative view of how a single model’s capabilities vary across task types.")
       ),
       bslib::card(
         full_screen = TRUE, collapsible = TRUE, collapsed = FALSE,
@@ -164,7 +164,7 @@ ui <- fluidPage(
       h3("Estimated Match-Up Results by Category"),
       div(
         style = "padding:20px; font-size:15px; line-height:1.5;",
-        p("In this section we use the Bradley–Terry model to estimate the latent ability of each chatbot based on head-to-head outcomes. The heatmap summarizes pairwise win probabilities across all models. Below, for a selected model, the stacked bar chart and table show the probability that one model defeats another, including the empirical rate of ties or 'both-bad' outcomes.")
+        p("In this section we use the Bradley–Terry model to estimate the latent ability of each chatbot based on head-to-head outcomes. The Bradley-Terry model assigns a positive score or 'ability' to each item, and the probability of one model beating another is proportional to the ratio of their scores. The heatmap summarizes pairwise win probabilities across all models. Below, for a selected model, the stacked bar chart and table show the probability that one model defeats another, including the empirical rate of ties or 'both-bad' outcomes.")
       ),
       bslib::card(
         full_screen = TRUE, collapsible = TRUE, collapsed = FALSE,
@@ -390,7 +390,7 @@ server <- function(input, output, session){
       e_bar(
         my_val, name = input$prof_model,
         label = list(
-          show = TRUE, position = "insideRight",
+          show = TRUE, position = "insideLeft",
           color = "#fff", fontSize = 10
         )
       ) |>
@@ -639,7 +639,7 @@ server <- function(input, output, session){
       e_bar(p_sel_vs_row, name = "P(Selected Model Wins)", stack = "prob",
             label = list(show = TRUE, position = "insideRight", color = "#fff", fontSize = 10
             )) |>
-      e_bar(p_tie_or_both_bad, name = "P(Tie or Both-bad)", stack = "prob",
+      e_bar(p_tie_or_both_bad, name = "Empirical % Tie or Both Bad", stack = "prob",
             label = list(show = TRUE, position = "right", color = "#000", fontSize = 10
             )) |>
       e_flip_coords() |>
@@ -671,7 +671,7 @@ server <- function(input, output, session){
       `# Matches` = tbl$matches_vs_selected,
       `P(Selected Model Wins)` = tbl$p_sel_vs_row,
       `P(Opponent Wins)` = tbl$p_row_vs_sel,
-      `P(Tie or Both Bad)` = tbl$p_tie_or_both_bad
+      `Empirical % Tie or Both Bad` = tbl$p_tie_or_both_bad
     ) 
     
     DT::datatable(
@@ -686,7 +686,7 @@ server <- function(input, output, session){
         buttons = c("copy", "csv", "excel")
       )
     ) %>%
-      DT::formatPercentage(columns = c("P(Selected Model Wins)", "P(Opponent Wins)", "P(Tie or Both Bad)"), digits = 1)
+      DT::formatPercentage(columns = c("P(Selected Model Wins)", "P(Opponent Wins)", "Empirical % Tie or Both Bad"), digits = 1)
   })
 }
 
