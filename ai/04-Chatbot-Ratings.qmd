@@ -119,7 +119,7 @@ The second section looks models individually, showing performance across the var
 
 Finally, a Bradley-Terry model is fit on decisive match outcomes to estimate each model's latent skill and uses these abilities to display head-to-head win probabilities in a heatmap, as well as tables and charts.
 
-```{r}
+```{r, eval=FALSE}
 stopifnot(all(c("model_a","model_b","winner","category") %in% names(data)))
 
 make_df2_leader <- function(df) {
@@ -771,7 +771,11 @@ shinyApp(ui, server)
 
 ## Limitations
 
-The first limitation we looked at was whether models received a balanced/comparable set of prompts. Different models are evaluated on different subsets of tasks, and some appear more frequently in the dataset than others. For example, a certain model may receive easier prompts, newer models may have fewer matchupts, and some pairs may never face each other directly.
+Although this system of pairwise human judgements allows us to compare chatbot performance, the underlying dataset and evluation procedure introduce several sources of potential bias. We examine several limitations that may affect the validity of the rankings and matchup probabilities.
+
+The first limitation we looked at was whether models received a balanced/comparable set of prompts. Different models are evaluated on different subsets of tasks, and some appear more frequently in the dataset than others. For example, a certain model may receive easier prompts, newer models may have fewer matchups, and some pairs may never face each other directly.
+
+We first transform the dataset so that each match contributes one row per model involved, allowing us to count the total number of appearances per model across all evaluations.
 
 ```{r}
 # Expand to one row per model per match
@@ -806,7 +810,7 @@ model_cat_counts %>%
 
 ```
 
-The following shows match counts for the models, demonstrating that there is a wide range of counts that each model appears.
+The following shows match counts for the models, demonstrating that there is a wide range of counts that each model appears, and thus, the dataset is not balanced.
 
 ```{r}
 ggplot(
@@ -826,7 +830,7 @@ ggplot(
   )
 ```
 
-The following Chi-square goodness-of-fit test, which yields a p-value of 2.2e-16, demonstrates that models appear an unequal number of times.
+To quantify how uneven the distribution is, we run a chi-squared test for uniformity on the frequency of model appearances. The null hypothesis is that all models appear equally often, while the alternative is that some appear more or less often than others. The following Chi-square test, which yields a p-value of 2.2e-16, demonstrates that models appear an unequal number of times (we reject the null hypothesis).
 
 ```{r}
 # Expand to one row per model per match
@@ -844,6 +848,8 @@ chisq_test_counts <- chisq.test(model_counts$freq)
 chisq_test_counts
 
 ```
+
+Beyond differences in the total number of matches, models also receive different types of prompts. This matters because a model's performance can depend heavily on what types of tasks it is asked to solve.
 
 The following shows a 100% stacked bar chart of category mix per model, demonstrating that each model faces different category mixes.
 
@@ -867,7 +873,9 @@ ggplot(
   )
 ```
 
-The following Chi-square test of independence demonstrates that models receive different mixes of categories.
+To formally test whether models receive similar category mixes, we construct a contingency table of model x category counts. The null hypothesis is that category distribution is independent of model, and the alternative is that category distribution depends on the model.
+
+We reject the null hypothesis and find that the mix of categories is not the same across models.
 
 ```{r}
 # Build contingency table: model × category
@@ -885,7 +893,9 @@ chisq_test_cat
 
 ```
 
-The second limitation we looked into was whether human rater variability and inconsistency may have played a role in the results.
+These results show that the evaluation data is not uniformly distributed across models, or balanced across categories. Some chatbots are judged more frequently than others, and they are also exposed to different mixes of prompt types. Because win rates and Bradley-Terry ability scores rely on the assumption that models are evaluated under comparable conditions, these imbalances introduce noise and potential bias.
+
+The second limitation we looked into was whether human rater variability and inconsistency may have played a role in the results. We first recode each match into one of three categories - a decisive win, tie, and both bad. Then, for each rater, we compute the proportion of judgements that fall into each of these categories.
 
 ```{r}
 df <- data %>%
@@ -922,7 +932,7 @@ rater_outcomes <- df %>%
 head(rater_outcomes)
 ```
 
-Distribution of tie usage:
+The following shows distribution of tie usage across raters. There are many raters who never use "Tie", and some select few who use "Tie" very often.
 
 ```{r}
 ggplot(rater_outcomes, aes(x = prop_tie)) +
@@ -937,7 +947,7 @@ ggplot(rater_outcomes, aes(x = prop_tie)) +
 
 ```
 
-Distribution of both bad usage:
+The following shows distribution of both bad usage across raters. Similarly, there are many raters who never use "Both Bad," and a few who use "Both Bad" very frequently.
 
 ```{r}
 ggplot(rater_outcomes, aes(x = prop_both_bad)) +
@@ -952,7 +962,7 @@ ggplot(rater_outcomes, aes(x = prop_both_bad)) +
 
 ```
 
-The following chi-square test looks into whether outcome distributions are different across raters.
+To formally test whether human raters apply outcome categories in a consistent way, we construct a contingency table of rater x outcome type. The null hypothesis of the chi-square test of independence is that raters use the categories at the same rates, and the alternative hypothesis is that raters differ in how they use categories. We reject the null hypothesis with a p-value of 2.2e-16.
 
 ```{r}
 rater_outcome_table <- df %>%
@@ -966,7 +976,9 @@ chisq.test(mat)
 
 ```
 
-Next, we see if raters have a side bias (prefer model a vs model b)
+The above results demonstrate that rater inconsistency is a limitation of our study. A chatbot's win rate can depend on which rater evaluated it.
+
+Another potential source of bias is side bias, which is the tendency for raters to prefer the model shown in A or B, regardless of model quality. Since the interface presents Model A first and Model B second, inconsistent/inattentive raters may systematically choose whichever option appears first.
 
 ```{r}
 rater_side_bias <- df %>%
@@ -981,6 +993,8 @@ rater_side_bias <- df %>%
 
 ```
 
+The plot below shows the distribution of rater side bias. The dashed vertical line at 0.50 represents fairness.
+
 ```{r}
 ggplot(rater_side_bias, aes(x = prop_choose_A)) +
   geom_histogram(bins = 30, fill = "purple") +
@@ -992,6 +1006,16 @@ ggplot(rater_side_bias, aes(x = prop_choose_A)) +
     y = "Number of raters"
   ) +
   theme_minimal()
+```
+
+Below, we compute the total number of decisive wins for Model A and Model B, then run a chi-square goodness of fit test comparing these totals to a perfectly fair system, where each side should win 50% of the time. Our p-value 9.754e-05 allows us to reject the null hypothesis and conclude that there is statistically significant evidence of positional bias. Model B wins slightly more often.
+
+```{r}
+total_A <- sum(df$a_win == 1, na.rm = TRUE)
+total_B <- sum(df$a_win == 0, na.rm = TRUE)
+
+chisq.test(c(total_A, total_B), p = c(0.5, 0.5))
+
 ```
 
 \[insert discussion\]
