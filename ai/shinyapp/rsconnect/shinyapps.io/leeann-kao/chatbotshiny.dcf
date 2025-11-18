@@ -1,0 +1,12 @@
+name: chatbotshiny
+title: chatbotshiny
+username: leeann-kao
+account: leeann-kao
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 16105772
+bundleId: 11197438
+url: https://leeann-kao.shinyapps.io/chatbotshiny/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE
