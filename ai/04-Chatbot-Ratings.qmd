@@ -22,7 +22,7 @@ Which chatbot(s) appears to perform best in the eyes of the judges/users? In a m
 
 The following reads in the data and saves it to a file, "data.rds," which is used for the following analysis.
 
-```{r, eval=FALSE}
+```{r, eval=FALSE, echo=FALSE}
 # read in data and bind rows
 datalist <- vector(mode = "list", length = 7)
 
@@ -44,7 +44,7 @@ flattened_data <- df %>%
 saveRDS(flattened_data, file = "data.rds")
 ```
 
-```{r, echo = FALSE}
+```{r, echo=FALSE}
 # load packages
 library(arrow)
 library(dplyr)
@@ -117,6 +117,7 @@ Finally, a Bradley-Terry model is fit on decisive match outcomes to estimate eac
 ```{r, eval=FALSE}
 stopifnot(all(c("model_a","model_b","winner","category") %in% names(data)))
 
+# leaderboard function
 make_df2_leader <- function(df) {
   df %>%
     mutate(
@@ -132,6 +133,7 @@ make_df2_leader <- function(df) {
     )
 }
 
+# ci function
 wilson_ci <- function(successes, n, z = 1.96) {
   ifelse(n > 0, {
     phat <- successes / n
@@ -144,6 +146,7 @@ wilson_ci <- function(successes, n, z = 1.96) {
 
 all_categories <- sort(unique(data$category))
 
+# ui
 ui <- fluidPage(
   theme = bs_theme(bootswatch = "flatly"),
   br(),
@@ -151,6 +154,8 @@ ui <- fluidPage(
                  style = "padding-bottom: 20px;"
   )),
   br(),
+  
+  # sidebar
   sidebarLayout(
     sidebarPanel(
       class = "sticky-top",
@@ -170,6 +175,8 @@ ui <- fluidPage(
       ),
       sliderInput("min_matches", "Minimum Matches", min = 1, max = 500, value = 30, step = 1)
     ),
+    
+    # leaderboard
     mainPanel(
 
       h3("Best Chatbots by Prompt Category"),
@@ -202,6 +209,8 @@ ui <- fluidPage(
       ),
 
       br(),
+      
+      # category
       h3("Chatbot Strength & Weaknesses by Category"),
       div(
         style = "padding:20px; font-size:15px; line-height:1.5;",
@@ -230,6 +239,8 @@ ui <- fluidPage(
       ),
 
       br(),
+      
+      # match-ups
       h3("Estimated Match-Up Results by Category"),
       div(
         style = "padding:20px; font-size:15px; line-height:1.5;",
@@ -260,8 +271,10 @@ ui <- fluidPage(
   )
 )
 
+# server
 server <- function(input, output, session){
-
+  
+  # filter by categries
   selected_df <- reactive({
     if (identical(input$view_mode, "Overall")) {
       data
@@ -269,7 +282,7 @@ server <- function(input, output, session){
       data %>% filter(category == input$view_mode)
     }
   })
-
+  
   models_available <- reactive({
     df <- selected_df()
     df %>%
@@ -287,7 +300,8 @@ server <- function(input, output, session){
     updateSelectInput(session, "prof_model", choices = ms, selected = sel_prof)
     updateSelectInput(session, "bt_model",   choices = ms, selected = sel_bt)
   }, ignoreInit = FALSE)
-
+  
+  # leaderboard
   leaderboard <- reactive({
     df2 <- make_df2_leader(selected_df())
     sort_col <- if (identical(input$sort_by, "Win rate")) "win_rate" else "success_rate"
@@ -316,7 +330,8 @@ server <- function(input, output, session){
   output$main_title <- renderText({
     "Chatbots Leaderboard (Success Rate = Win Rate + 0.5×Tie Rate)"
   })
-
+  
+  # leaderboard chart
   output$main_chart <- renderEcharts4r({
     lb <- leaderboard()
     validate(need(nrow(lb) > 0, "No models meet the minimum matches threshold."))
@@ -347,6 +362,7 @@ server <- function(input, output, session){
       e_toolbox_feature("saveAsImage")
   })
 
+  # leaderboard table
   output$main_table <- renderDT({
     lb <- leaderboard()
     validate(need(nrow(lb) > 0, "No models meet the minimum matches threshold."))
@@ -396,7 +412,8 @@ server <- function(input, output, session){
         .groups = "drop"
       )
   })
-
+  
+  # categories
   sel_profile <- reactive({
     metric <- if (isTRUE(input$prof_use_success)) "success_rate" else "win_rate"
     mcs <- model_cat_summary()
@@ -427,6 +444,7 @@ server <- function(input, output, session){
     paste0("Category Profile for ", input$prof_model)
   })
 
+  # categories chart
   output$prof_bar <- renderEcharts4r({
     validate(
       need(length(models_available()) > 0, "No models in the current view/filter."),
@@ -484,6 +502,7 @@ server <- function(input, output, session){
       e_toolbox_feature("saveAsImage")
   })
 
+  # categories table
   output$prof_detail_table <- DT::renderDT({
     validate(
       need(length(models_available()) > 0, "No models in the current view/filter."),
@@ -548,6 +567,7 @@ server <- function(input, output, session){
       DT::formatPercentage(columns = c("Rate", "Category Avg"), digits = 1)
   })
 
+  # matchups
   bt_pair_counts <- reactive({
     selected_df() %>%
       transmute(
@@ -595,6 +615,7 @@ server <- function(input, output, session){
     setNames(ab$ability, ab$model)
   })
 
+  # matchup heatmap
   output$bt_heatmap <- renderPlotly({
     ab_map   <- bt_abilities()
     choices  <- models_available()
@@ -630,6 +651,7 @@ server <- function(input, output, session){
                       ifelse(is.na(prob), "—", percent(prob, 0.1)))
     )
   
+    # plot
     p <- ggplot(grid, aes(x = col_model, y = row_model, fill = prob, text = hover)) +
       geom_tile(na.rm = FALSE) +
       scale_fill_viridis_c(
@@ -685,6 +707,7 @@ server <- function(input, output, session){
       arrange(desc(p_sel_vs_row))
   }
 
+  # matchup chart
   output$bt_chart <- renderEcharts4r({
     ab_map   <- bt_abilities()
     pair_cnt <- bt_pair_counts()
@@ -722,6 +745,7 @@ server <- function(input, output, session){
       e_toolbox_feature("saveAsImage")
   })
 
+  # matchup table
   output$bt_table <- DT::renderDT({
     ab_map   <- bt_abilities()
     pair_cnt <- bt_pair_counts()
