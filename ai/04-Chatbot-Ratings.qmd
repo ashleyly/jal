@@ -1,7 +1,6 @@
 ---
 title: "Chatbot Ratings"
-output: html_document
-runtime: shiny
+output: pdf_document
 editor: visual
 ---
 
@@ -45,7 +44,7 @@ flattened_data <- df %>%
 saveRDS(flattened_data, file = "data.rds")
 ```
 
-```{r}
+```{r, echo = FALSE}
 # load packages
 library(arrow)
 library(dplyr)
@@ -265,11 +264,7 @@ server <- function(input, output, session){
 
   selected_df <- reactive({
     if (identical(input$view_mode, "Overall")) {
-      df <- data
-      if (!is.null(input$cat) && length(input$cat) > 0) {
-        df <- df %>% filter(category %in% input$cat)
-      }
-      df
+      data
     } else {
       data %>% filter(category == input$view_mode)
     }
